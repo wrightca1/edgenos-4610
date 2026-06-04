@@ -1,0 +1,27 @@
+#!/bin/bash
+# [EdgeNOS-4610] rootless-build sudo shim.
+#
+# Under rootless Docker we already run as container-root, so privilege escalation
+# is a no-op. More importantly, ONL's initrd/RFS Makefiles call `sudo cpio`,
+# `sudo tar`, `sudo dpkg -x`, etc., and the REAL sudo sanitizes the environment
+# (drops LD_PRELOAD), which would knock those children out of the surrounding
+# `fakeroot` session — breaking the faked mknod() that lets us pack device nodes
+# (e.g. dev/console) into the initrd cpio without CAP_MKNOD.
+#
+# This shim strips sudo's own options and execs the command IN-PROCESS, so the
+# ambient environment (LD_PRELOAD / FAKEROOTKEY) is preserved. Installed at
+# /usr/local/bin/sudo (ahead of /usr/bin/sudo in PATH). docker_shell calls the
+# absolute /usr/bin/sudo, so it is unaffected by this shim.
+set -e
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -E|-H|-S|-n|-k|-K|-b|-i|-l|-s|-v) shift ;;
+    -u|-g|-p|-r|-t|-C|-h|-D|-R|-U)    shift 2 ;;   # flag that takes a value
+    -u*|-g*|-p*)                       shift ;;     # glued form, e.g. -uroot
+    --)                                shift; break ;;
+    --*=*)                             shift ;;     # --opt=val
+    -*)                                shift ;;     # any other flag
+    *)                                 break ;;     # first non-option = command
+  esac
+done
+exec "$@"
