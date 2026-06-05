@@ -104,3 +104,15 @@ platform, so TX_DISABLE/LPMODE aren't exposed through the ONLP *API* — but the
 underlying CPLD control (`module_tx_disable_*`) exists and QSFP-reset is handled
 at init, so links come up; a NOS agent can drive TX_DISABLE via the CPLD sysfs
 directly if needed.
+
+### CORRECTION (2026-06-05) — 10G SFP+ PHY gap found via live `phy info`
+
+The data-plane row above understated the PHY layer. Live `bcmsh phy info` shows
+the 10G SFP+ ports (xe0–3) sit behind an external **BCM84758** firmware-driven
+PHY (the 1G ports use **BCM54282**; QSFP is internal Warpcore B1 4-lane).
+**OpenMDK/OpenBCM do NOT support the BCM84758** (OpenMDK has sibling 84756 with a
+different PHY ID `0x8670` vs live `0x86f0`; OpenBCM has only an enum, no
+driver/firmware). → **10G SFP+ uplinks won't link** until we get the 84758
+driver+ucode (extract from the backed-up ICOS image, or a PHY SDK). Full detail +
+resolution: `../../live-investigation/PHY_SIGNAL_PATH.md`. 1G (BCM54282) and the
+QSFP SerDes ARE covered.

@@ -51,7 +51,12 @@ between Trident+ and Helix4. Do not copy 5610 addresses verbatim.
   eTSEC). The 4610 CPLD is on **I²C @ 0x30**, and the mgmt MAC is an iProc GMAC.
 - Warpcore SerDes + DS100DF410 retimers + BCM84740 PHY firmware: the 4610 uses
   **integrated copper PHYs** for the 48× 1G ports and Helix4 10G SerDes for
-  uplinks — different (and simpler) SerDes story, **no external retimers**.
+  uplinks — different SerDes story.
+  > **CORRECTION (2026-06-05, from live `phy info`):** this "simpler / no external
+  > retimers" claim was WRONG. The 10G SFP+ ports (xe0–3) have an external
+  > **BCM84758** firmware-driven PHY (gearbox/retimer-class), and the 1G ports use
+  > **BCM54282** PHYs. See `live-investigation/PHY_SIGNAL_PATH.md` — the BCM84758
+  > is a real gap (no driver/firmware in OpenMDK/OpenBCM).
 
 ---
 

@@ -117,7 +117,7 @@ remaining work, and it's table-programming (Option C), not hardware RE.
 | PCIe BAR0 + PAXB sub-window remap | **Gone** — CPU on-die, direct CMICd MMIO |
 | Reverse-engineer SCHAN / proprietary switchd | **Not needed** — OpenMDK BMD exists |
 | Chip table layouts unknown (mined via bcmcmd) | **Provided** — CDK `bcm56340_a0_defs.h` |
-| Warpcore SerDes + DS100DF410 retimer unmute | **Gone** — integrated copper PHYs, no retimers |
+| Warpcore SerDes + DS100DF410 retimer unmute | Partly — no DS100DF410, BUT 10G SFP+ has a **BCM84758 firmware PHY** (gearbox/retimer-class) that's NOT in OpenMDK/OpenBCM → real PHY gap. See `live-investigation/PHY_SIGNAL_PATH.md` |
 | 6-layer I²C mux tree | **Trivial** — single PCA9548 |
 | CPLD RE (memory-mapped, undocumented) | ONL driver exists (`accton_as4610_cpld.c`); just dump to confirm |
 | RX DMA / CMICm completion bug | Re-verify XGS-M DCB on this stepping (partial carryover) |

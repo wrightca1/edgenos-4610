@@ -89,7 +89,7 @@ optical and have no per-port EEPROM — only the 6 SFP/QSFP cages do.)
 |---|---|---|
 | I²C mux levels | up to 6 (PCA9546 + PCA9548 cascades) | **1** (single PCA9548) |
 | GPIO expanders | 6× PCA9506 + 4× PCA9538 | none (CPLD + iProc GPIO) |
-| Retimers | 8× TI DS100DF410 (32 channels) | **none** |
+| Retimers / 10G PHY | 8× TI DS100DF410 (32 channels) | **BCM84758 firmware PHY** on the 4× 10G SFP+ (xe0–3) — retimer/gearbox-class; see `live-investigation/PHY_SIGNAL_PATH.md`. (1G uses BCM54282 PHYs.) |
 | External PHYs | BCM84740 ×N + mgmt BCM54610 | integrated copper PHYs |
 | CPLD access | memory-mapped (eLBC @ 0xEA000000) | **I²C @ 0x30** |
 | Total ICs | ~44 | far fewer |
