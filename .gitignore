@@ -24,3 +24,6 @@ live-investigation/backup/
 
 # compiled CPLD reader (build from i2cread.c)
 live-investigation/tools/i2cread
+
+# BCM84758 PHY driver+firmware pulled from public Broadcom XGS SDK (source-available; keep local)
+nos/datapath/phy84758-src/

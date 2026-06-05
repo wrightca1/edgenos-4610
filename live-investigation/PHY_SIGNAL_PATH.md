@@ -116,3 +116,33 @@ docSAFE/contract — no open driver+firmware.
 **Carve = focused Ghidra RE next:** disassemble the 84758 PHY-init path in
 `switchdrvr`, find the ucode data pointer + length, carve the blob — the 5610-class
 work, but now we possess the binary that contains it (+ symbol file to assist).
+
+## ✅ RESOLVED via Plan B (2026-06-05) — BCM84758 source found public, no carve needed
+
+GitHub code search found the BCM84758 driver+firmware as **source** in public
+full Broadcom XGS-SDK mirrors (incl. **Broadcom's own `robo2-xsdk`** + multiple
+`sdk-xgs-robo-6.5.7` copies). Pulled the complete set to
+`nos/datapath/phy84758-src/` (git-ignored; Broadcom source-available license):
+
+| File | Role |
+|---|---|
+| `phy84740.c` (325 KB) | **the driver** — `#define PHY84740_ID_84758 0x84758`; loads `phy84758_ucode_bin` (the 84758 is in the **BCM84740 driver family**) |
+| `phy84758_ucode.c` (205 KB) | **the firmware** — *"Firmware used by BCM84758 device's micro-Controller. Version 0128"* |
+| `phyident.c/.h` | maps `_phy_id_BCM84758` (OUI `BRCM_OUI5`, model `0x2F`) → `phy_84740drv_xe` |
+| `phy84756.*`, `phy84740_ucode.c`, fcmap/i2c | family support files |
+
+**Key insight:** the 84758 is **84740-family** — the *same PHY family as the
+5610* (BCM84740) — so our 5610 PHY RE transfers directly, and the SDK source
+confirms the structure. So the carve (Plan A) is **not needed**; the
+binary-extract route stays only as a last-resort cross-check.
+
+### Integration path
+The driver is the full-SDK `src/soc/phy/` style → cleanest with the **OpenBCM**
+datapath (which we already want for L3): add `phy84740.c` + `phy84758_ucode.c` +
+the `phyident` entry into OpenBCM `src/soc/phy/` (our 6.5.27 has the enum but not
+these files; they come from 6.5.7 — minor port). With OpenMDK (different phy
+framework) it'd need more adaptation, so this nudges the datapath toward OpenBCM.
+Still requires a 10G module + on-hardware test to confirm link/training.
+
+License note: Broadcom source-available (same class as OpenMDK/OpenBCM) — fine to
+use/build on our own hardware; kept local, not committed (see LICENSING.md).
