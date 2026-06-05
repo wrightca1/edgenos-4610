@@ -77,3 +77,30 @@ own closed platform stack (no standard `hwmon`); under **our** ONL NOS the same
 chips bind to standard Linux i2c → sysfs and ONLP reads them. The live readings
 confirm the sensors physically work — so the environmental side is **complete**:
 nothing missing, just runs through ONLP instead of ICOS's stack.
+
+## SFP+ / QSFP+ optics (ports 49–54) — verified
+
+Two sides: **management** (presence/EEPROM/control via ONLP + CPLD + optoe) and
+**data-plane link** (the SDK driving xe0–5). Both covered.
+
+| Function | Our coverage | Status |
+|---|---|---|
+| **Presence** (SFP+ 49–52, QSFP+ 53–54) | CPLD regs `0x02`/`0x03` (SFP) + `0x21` (QSFP), via ONLP `module_present_*` | ✅ regs verified on live box |
+| **EEPROM** (vendor/type) | `optoe2` (SFP) / `optoe1` (QSFP) on PCA9548 mux @ `0x70`, ch0–5 → `/sys/.../N-0050/eeprom`; ONLP `onlp_sfpi_eeprom_read` | ✅ path present (mainline `optoe`+`pca954x`) |
+| **DOM/diagnostics** | ONLP `onlp_sfpi_dom_read` | ✅ |
+| **RX_LOS / TX_FAULT** | CPLD `module_rx_los_*`/`module_tx_fault_*`; ONLP `control_get` (SFP+) | ✅ |
+| **TX_DISABLE** | CPLD kernel driver exposes `module_tx_disable_1..4` (writable) | ✅ in kernel driver — but ONLP `control_set` is a **stub** (`E_UNSUPPORTED`); trivially wired to the sysfs if a NOS agent needs it |
+| **QSFP reset** | CPLD driver "brings QSFPs out of reset" at init | ✅ |
+| **Data-plane link** (xe0–3 10G, xe4–5 20G) | Warpcore SerDes (in our `linux-user-mdk` binary) + `config.bcm`: `phy_fiber_pref_xe0-3=1`, `port_phy_addr_xe0-3=0x40-0x43`, `bcm56340_4x10=1` | ✅ |
+
+**Live state:** no optics currently inserted — CPLD `0x21=0x00` (QSFP present bits
+clear) and bcm `ps` shows xe0–5 *down*, consistent with `show environment` (no
+modules). So a live EEPROM read couldn't be exercised; the access path is sound
+by construction (ONL DTS + mainline `optoe`/`pca954x` + the verified CPLD present
+regs). Insert an SFP+/QSFP+ and the module EEPROM is readable at the mux channel.
+
+**One nit, not a blocker:** ONLP `onlp_sfpi_control_set` is unimplemented on this
+platform, so TX_DISABLE/LPMODE aren't exposed through the ONLP *API* — but the
+underlying CPLD control (`module_tx_disable_*`) exists and QSFP-reset is handled
+at init, so links come up; a NOS agent can drive TX_DISABLE via the CPLD sysfs
+directly if needed.
