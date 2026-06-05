@@ -10,7 +10,7 @@ On the switch:
 """
 import os, sys, socket, struct, argparse, time
 
-OP_WRQ=2; OP_DATA=3; OP_ACK=4; OP_ERR=5; OP_OACK=6
+OP_RRQ=1; OP_WRQ=2; OP_DATA=3; OP_ACK=4; OP_ERR=5; OP_OACK=6
 
 def parse_wrq(data):
     # opcode(2) filename\0 mode\0 [opt\0 val\0]...
@@ -24,11 +24,60 @@ def parse_wrq(data):
         i += 2
     return fname, mode, opts
 
+def serve_file(cli, fname, opts, outdir):
+    """RRQ (GET): send a file from outdir to the client."""
+    safe = os.path.basename(fname)
+    path = os.path.join(outdir, safe)
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(("", 0)); s.settimeout(15)
+    if not os.path.isfile(path):
+        s.sendto(struct.pack("!HH", OP_ERR, 1) + b"not found\x00", cli); s.close()
+        print(f"[RRQ] {safe}: NOT FOUND", flush=True); return
+    blksize = 512; oack = {}
+    if "blksize" in opts:
+        blksize = max(8, min(int(opts["blksize"]), 65464)); oack["blksize"] = str(blksize)
+    if "tsize" in opts:
+        oack["tsize"] = str(os.path.getsize(path))
+    print(f"[RRQ] {cli[0]}:{cli[1]} <- {safe} ({os.path.getsize(path)} B) opts={opts}", flush=True)
+    f = open(path, "rb")
+    try:
+        if oack:
+            s.sendto(struct.pack("!H", OP_OACK) + b"".join(k.encode()+b"\x00"+v.encode()+b"\x00" for k,v in oack.items()), cli)
+            # expect ACK 0
+            try:
+                pkt,_ = s.recvfrom(1024)
+            except socket.timeout:
+                print("  ! no OACK ack"); return
+        blk = 1
+        while True:
+            chunk = f.read(blksize)
+            s.sendto(struct.pack("!HH", OP_DATA, blk & 0xFFFF) + chunk, cli)
+            # wait for ACK of this block (retry a few times)
+            acked = False
+            for _ in range(6):
+                try:
+                    pkt,_ = s.recvfrom(1024)
+                except socket.timeout:
+                    s.sendto(struct.pack("!HH", OP_DATA, blk & 0xFFFF) + chunk, cli); continue
+                if pkt[1] == OP_ACK and struct.unpack("!H", pkt[2:4])[0] == (blk & 0xFFFF):
+                    acked = True; break
+            if not acked:
+                print("  ! transfer stalled"); break
+            blk += 1
+            if len(chunk) < blksize:
+                print(f"  done: sent {path}", flush=True); break
+    finally:
+        f.close(); s.close()
+
 def recv_one(main, outdir):
     data, cli = main.recvfrom(65535)
-    if not data or data[1] != OP_WRQ:
+    if not data:
         return
+    op = data[1]
     fname, mode, opts = parse_wrq(data)
+    if op == OP_RRQ:
+        serve_file(cli, fname, opts, outdir); return
+    if op != OP_WRQ:
+        return
     safe = os.path.basename(fname) or "upload.bin"
     path = os.path.join(outdir, safe)
     print(f"[WRQ] {cli[0]}:{cli[1]} -> {safe} mode={mode} opts={opts}", flush=True)

@@ -21,3 +21,6 @@ nos/datapath/mdk-app/linux-user-mdk
 
 # Proprietary stock-NOS backup images (ICOS/diag/uboot) — keep LOCAL, do not push
 live-investigation/backup/
+
+# compiled CPLD reader (build from i2cread.c)
+live-investigation/tools/i2cread
