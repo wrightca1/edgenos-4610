@@ -1,0 +1,12 @@
+ifconfig eth0
+eth0      Link encap:Ethernet  HWaddr 04:F8:F8:15:A8:40  
+          inet addr:10.1.1.200  Bcast:10.1.1.255  Mask:255.255.255.0
+          inet6 addr: fe80::6f8:f8ff:fe15:a840/64 Scope:Link
+          UP BROADCAST RUNNING ALLMULTI MULTICAST  MTU:1500  Metric:1
+          RX packets:21319 errors:0 dropped:1 overruns:0 frame:0
+          TX packets:70 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000 
+          RX bytes:3225378 (3.0 MiB)  TX bytes:6299 (6.1 KiB)
+          Interrupt:20 Base address:0xa000 
+
+# 

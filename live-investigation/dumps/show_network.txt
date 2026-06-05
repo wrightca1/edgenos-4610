@@ -1,0 +1,17 @@
+show network
+
+Interface Status............................... Down
+IP Address..................................... 0.0.0.0
+Subnet Mask.................................... 0.0.0.0
+Default Gateway................................ 0.0.0.0
+IPv6 Administrative Mode....................... Enabled
+Burned In MAC Address.......................... 04:F8:F8:15:A8:41
+Locally Administered MAC address............... 00:00:00:00:00:00
+MAC Address Type............................... Burned In
+Configured IPv4 Protocol....................... DHCP
+Configured IPv6 Protocol....................... None
+IPv6 AutoConfig Mode........................... Disabled
+Management VLAN ID............................. 1
+DHCP Client Identifier.........................
+
+(Routing) #

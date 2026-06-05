@@ -1,0 +1,24 @@
+ls -l /dev/sd* /dev/mmcblk* /dev/md* 2>/dev/null; echo ===TOOLS===; for t in f
+disk sgdisk parted dd lsblk blkid tar gzip nc scp ssh dropbear busybox; do print
+f "%s:" $t; command -v $t || echo " -"; done
+brw-rw----    1 root     disk        8,   0 Feb 28  2020 /dev/sda
+brw-rw----    1 root     disk        8,   1 Feb 28  2020 /dev/sda1
+brw-rw----    1 root     disk        8,   2 Jan  1 00:00 /dev/sda2
+brw-r--r--    1 root     root        8,  16 Feb 28  2020 /dev/sdb
+brw-r--r--    1 root     root        8,  17 Feb 28  2020 /dev/sdb1
+brw-r--r--    1 root     root        8,  18 Feb 28  2020 /dev/sdb2
+===TOOLS===
+fdisk: -
+sgdisk: -
+parted: -
+dd:/bin/dd
+lsblk: -
+blkid: -
+tar:/bin/tar
+gzip:/bin/gzip
+nc: -
+scp: -
+ssh: -
+dropbear: -
+busybox:/bin/busybox
+# 

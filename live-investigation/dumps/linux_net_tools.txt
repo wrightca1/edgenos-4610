@@ -1,0 +1,15 @@
+ifconfig 2>/dev/null | grep -A1 -iE "eth0|inet addr"; echo ===APPLETS===; busy
+box 2>&1 | tr "," "\n" | grep -wiE "tftp|wget|nc|ftpput|ftpget|scp|ssh" 
+grep: invalid option -- 'E'
+BusyBox v1.22.1 (2018-03-27 11:11:30 EDT) multi-call binary.
+
+Usage: grep [-HhnlLoqvsriwF] [-m N] [-A/B/C N] PATTERN/-e PATTERN.../-f FILE [FILE]...
+
+===APPLETS===
+grep: invalid option -- 'E'
+/bin/sh: tr: not found
+BusyBox v1.22.1 (2018-03-27 11:11:30 EDT) multi-call binary.
+
+Usage: grep [-HhnlLoqvsriwF] [-m N] [-A/B/C N] PATTERN/-e PATTERN.../-f FILE [FILE]...
+
+# 

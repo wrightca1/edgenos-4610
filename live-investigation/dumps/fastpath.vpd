@@ -1,0 +1,10 @@
+cat /mnt/application/fastpath.vpd 2>/dev/null
+Product Details:-
+         Operational Code Image File Name - FastPath-ICOS-esw-as4610-iproc_as4610-XL4XR-CNTRF-BD6IOQHr3v4m3b7
+         Rel 3, Ver 4, Maint Lev 3, Bld No 7
+         Timestamp - Fri Feb 28 17:27:08 EST 2020
+         Number of components - 1
+         Device 353088
+         ImageFlags 0
+         L7_MODULE_LIST=linux-kernel-bde.ko  linux-user-bde.ko
+# 

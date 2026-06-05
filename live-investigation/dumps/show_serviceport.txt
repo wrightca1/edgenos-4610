@@ -1,0 +1,14 @@
+show serviceport
+
+Interface Status............................... Up
+IP Address..................................... 10.1.1.200
+Subnet Mask.................................... 255.255.255.0
+Default Gateway................................ 10.1.1.1
+IPv6 Administrative Mode....................... Enabled
+IPv6 Prefix is ................................ fe80::6f8:f8ff:fe15:a840/64
+Configured IPv4 Protocol....................... DHCP
+Configured IPv6 Protocol....................... None
+IPv6 AutoConfig Mode........................... Disabled
+Burned In MAC Address.......................... 04:F8:F8:15:A8:40
+
+(Routing) #

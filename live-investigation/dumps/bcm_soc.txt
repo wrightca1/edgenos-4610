@@ -1,0 +1,32 @@
+soc
+  Unit 0 Driver Control Structure:
+  Chip=BCM56340_A0 Rev=0x01 Driver=BCM56340_A0
+  Flags=0x40143: attached initialized mem-clear-use-dma ipmc-repl-shared; board type 0x0
+  CM: Base=0xa698e000
+  Disabled: reg_flags=0x100 mem_flags=0x0
+  SchanOps=7409415 MMUdbg=0 LinkPause=0
+  Counter: int=2000000us per=2122643us dmaBuf=0xa5914b00
+           EvictInvalidPoolIdCount=0
+  Timeout: Schan=0(300000us) MIIM=0(1000000us)
+  Intr: Total=11583 Sc=0 ScErr=0 MMU/ARLErr=0
+        LinkStat=0 PCIfatal=0 PCIparity=0
+        ARLdrop=0 ARLmbuf=0 ARLxfer=0 ARLcnt0=0
+        TableDMA=11369 TSLAM-DMA=212 CCM-DMA=0 SW=0
+        MemCmd[BSE]=0 MemCmd[CSE]=0 MemCmd[HSE]=0
+        ChipFunc[0]=0 ChipFunc[1]=0 ChipFunc[2]=0
+        ChipFunc[3]=0 ChipFunc[4]=0
+        FifoDma[0]=0 FifoDma[1]=0 FifoDma[2]=0 FifoDma[3]=0
+        I2C=0 MII=0 StatsDMA=0 Desc=0 Chain=1
+  Error: SDRAM=0 CFAP=0 Fcell=0 MmuSR=0
+  SER events(mem=0 reg=0 nak=0 stat=0 ecc=0 direct=0 fifo=0 tcam=0)
+  SER corrections(fix=0 clear=0 restore=0 special=0 err:0)
+  PKT DMA: dcb=t23 tpkt=1 tbyt=9216 rpkt=0 rbyt=0
+  DV: List: max-q=32 cur-tq=1 cur-rq=0 dv-size=160
+  DV: Statistics: allocs=71 frees=55 alloc-q=54
+  Mem cache (count=273 size=9480728 vmap size=94091 errmap size=3008)
+  Reg cache (count=30 size=3223200)
+  dma-ch-0 TX Idle   Queue=0 ((nil)) default intr mbm
+  dma-ch-1 RX Active Queue=16 (0xa2bd2130) default intr mbm
+  dma-ch-2 -- Idle   Queue=0 ((nil)) intr mbm
+  dma-ch-3 -- Idle   Queue=0 ((nil)) intr mbm
+BCM.0> 

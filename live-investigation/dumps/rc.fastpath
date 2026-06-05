@@ -1,0 +1,48 @@
+cat /etc/rc.d/rc.fastpath
+#!/bin/sh
+
+# FASTPATH startup script
+
+# These parameters must be set appropriately for the target platform.
+# The rc.start script uses these parameters to initialize the platform.
+
+# Initialize startup variables
+. /etc/rc.d/rc.init
+. ./etc/profile
+
+CONFIG_DEV=/dev/sda2
+CONFIG_ERASE_DEV=/dev/sda2
+CONFIG_FSTYPE=ext2
+SERIAL_DEV=ttyS0
+
+
+CODE_IMAGE_NUM=3
+UPDATE_IMAGE_NUM=2
+
+PLAT_SUPPORTS_COREDUMP=Y
+PLAT_COMPRESSION=1
+PLAT_SUPPORTS_USB=Y
+PLAT_COREDUMP_COUNT_MAX=1
+
+#sleep 5 for wait sda1 ready
+sleep 5
+echo /sbin/mdev > /proc/sys/kernel/hotplug
+mdev -s
+
+# mdev automounts /dev/sda2 on /media/sda2 which prevents
+# e2fsck from running. umount the the device to allow e2fsck.
+FORCE_UMOUNT_DEV=/media/sda2
+
+eth0_addr=`cat /sys/class/net/eth0/address 2> /dev/null`
+uboot_eth0_addr=`fw_printenv ethaddr 2> /dev/null`
+if [ ! -z "$eth0_addr" -a ! -z "$uboot_eth0_addr" -a ! "ethaddr="${eth0_addr} = "${uboot_eth0_addr}" ]; then
+    ifconfig eth0 hw ether `echo ${uboot_eth0_addr} | sed -r s/^ethaddr=//`
+fi
+
+# On as4610 platform, usb flash drive is mounted first, as /dev/sda
+CONFIG_DEV_ALTERNATIVE="/dev/sdb2"
+CONFIG_ERASE_DEV_ALTERNATIVE="/dev/sdb2"
+
+. /etc/rc.d/rc.start
+
+# 

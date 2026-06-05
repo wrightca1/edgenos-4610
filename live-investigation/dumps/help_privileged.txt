@@ -1,0 +1,49 @@
+?
+
+application              Start or stop an application.
+arp                      Purge a dynamic or gateway ARP entry.
+bcmsh                    Enter into BCM Shell
+boot                     Marks the given image as active for subsequent
+                         re-boots.
+cablestatus              Isolate the problem in the cable attached to an
+                         interface.
+capture                  Enable CPU packets capturing.
+clear                    Reset configuration to factory defaults.
+configure                Enter into Global Config Mode.
+copy                     Uploads or Downloads file.
+debug                    Configure debug flags.
+delete                   Deletes the given image or the language pack file.
+dir                      Display directory information.
+disconnect               Close remote console session(s).
+enable                   Set the password for the enable privilege level.
+erase                    Erase configuration file.
+exit                     To exit from the mode.
+filedescr                Sets text description for a given image.
+help                     Display help for various special keys.
+hostname                 Change the system hostname.
+ip                       Configure IP parameters.
+linuxsh                  Enter into Linux Shell
+logout                   Exit this session. Any unsaved changes are lost.
+network                  Configuration for inband connectivity.
+ping                     Send ICMP echo packets to a specified IP address.
+quit                     Exit this session. Any unsaved changes are lost.
+release                  To release IP Address.
+reload                   Reset the switch.
+renew                    To renew IP Address.
+script                   Apply/Delete/List/Show/Validate Configuration Scripts.
+serviceport              Specify the serviceport parameters / protocol.
+set                      Set Router Parameters.
+show                     Display Switch Options and Settings.
+snmp-server              Configure SNMP server parameters.
+sshcon                   Configure SSH connection parameters.
+telnet                   Telnet to a remote host.
+telnetcon                Configure telnet connection parameters.
+terminal                 Set terminal line parameters.
+traceroute               Trace route to destination.
+udld                     Reset UDLD disabled interfaces.
+unmount                  Flush cache and unmount a USB device
+vlan                     Type 'vlan database' to enter into VLAN mode.
+watchdog                 Enable/Disable/Clear watchdog timer settings.
+write                    Configures save options.
+
+(Routing) #

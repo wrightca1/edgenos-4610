@@ -1,0 +1,59 @@
+ps
+                 ena/    speed/ link auto    STP                  lrn  inter   max  loop
+           port  link    duplex scan neg?   state   pause  discrd ops   face frame  back
+       ge0  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge1  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge2  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge3  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge4  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge5  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge6  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge7  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge8  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge9  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge10  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge11  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge12  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge13  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge14  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge15  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge16  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge17  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge18  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge19  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge20  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge21  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge22  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge23  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge24  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge25  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge26  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge27  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge28  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge29  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge30  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge31  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge32  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge33  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge34  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge35  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge36  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge37  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge38  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge39  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge40  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge41  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge42  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge43  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge44  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge45  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge46  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge47  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge48  !ena    1G  FD   SW  No   Disable          None   FA   GMII 16356     
+       xe0  down   10G  FD   SW  No   Disable          None    D  XGMII  1518     
+       xe1  down   10G  FD   SW  No   Disable          None    D  XGMII  1518     
+       xe2  down   10G  FD   SW  No   Disable          None    D  XGMII  1518     
+       xe3  down   10G  FD   SW  No   Disable          None    D  XGMII  1518     
+       xe4  down   20G  FD   SW  No   Disable          None    D  XGMII  1518     
+       xe5  down   20G  FD   SW  No   Disable          None    D  XGMII  1518     
+BCM.0> 

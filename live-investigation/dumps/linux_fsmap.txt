@@ -1,0 +1,75 @@
+which httpd; echo ===ROOT===; ls /; echo ===RCD===; ls /etc/rc.d/; echo ===APP
+===; ls /mnt/application/; echo ===FP===; ls /mnt/fastpath/
+===ROOT===
+bin      etc      lib      media    proc     sbin     tmp      var
+dev      init     linuxrc  mnt      root     sys      usr      webroot
+===RCD===
+rc.coredump  rc.fastpath  rc.init      rc.reboot    rc.start
+===APP===
+OpEN.so                      lighttpd_custom.conf
+OpENUtil.lua                 lighttpd_fpauth.conf
+OpENUtil.py                  lighttpd_inc.conf
+OpENUtil.rb                  lighttpd_luaopen.conf
+OpEN_Lua.so                  lighttpd_open_custom.conf
+OpEN_py.py                   lighttpd_prod.conf
+README                       lighttpd_restconf.conf
+UPDATE_BOOTCODE              lighttpd_usr.conf
+UPDATE_BOOTCODE.md5sum       lighttpd_usr.sh
+_OpEN.so                     net-snmp
+active.cfg                   netconf_agent
+devshell_symbols.gz          netsnmp_app
+devshell_symbols.gz.md5sum   netsnmp_trap_app
+fastpath.vpd                 open_magnet
+fastpath.vpd.md5sum          open_websrc.sqfs
+libcrypto-1.0.0.so           open_websrc.sqfs.md5sum
+libcrypto.so.1.0.0           opensshd
+libldap.so                   ospf_app
+liblua.so                    ping_app
+libluaconn.so                procmgr
+libnetconf.so                proctest
+libnetsnmp.so                procutil
+libnetsnmp_mibs.so           restconf_app
+libopenclt.so                restconf_magnet
+libospf.so                   restconf_websrc.sqfs
+libpam.so                    restconf_websrc.sqfs.md5sum
+libping.so                   scp
+libproc_libs.so              sernum.cfg
+librestconf.so               sftp
+librpcclt.so                 snmpd.conf
+libsock_agent.so             sock_agent_app
+libsshcompat.so              ssh
+libsshpam.so                 ssh-keygen
+libssl-1.0.0.so              sshd_config.netconf
+libssl.so.1.0.0              switchdrvr
+libtraceroute.so             syncdb
+libvr_agent.so               syncdb_test
+libvrf_init.so               traceroute_app
+libxml2.so                   u-boot.bin.spi
+libxslt.so                   u-boot.bin.spi.md5sum
+libz.so                      vmlinux.md5sum
+lighttpd                     vr_agent_app
+lighttpd.conf                vrf_init_app
+lighttpd_csrf.conf           vrutil
+lighttpd_ctrl.sh             yang.tar.gz
+===FP===
+coredump_debug_config           ologNdx2.txt
+coredump_debug_config.md5sum    serial_speed.pending
+coredump_log.old                slog0.txt
+coredump_log.txt                slog1.txt
+coredump_regular_config         slog2.txt
+coredump_regular_config.md5sum  snmpOprData.cfg
+crashlogs                       ssh_host_dsa_key
+dh1024.pem                      ssh_host_dsa_key.pub
+dh512.pem                       ssh_host_dsa_key_netconf
+hpc_port_broad.cfg              ssh_host_dsa_key_netconf.pub
+image1                          ssh_host_key
+image2                          ssh_host_key.pub
+ldap.conf                       ssh_host_rsa_key
+log2.bin                        ssh_host_rsa_key.pub
+lost+found                      ssh_host_rsa_key_netconf
+olog0.txt                       ssh_host_rsa_key_netconf.pub
+olog1.txt                       user-apps
+olog2.txt                       user.start
+ologNdx0.txt                    watchdog.data
+ologNdx1.txt                    yang
+# 

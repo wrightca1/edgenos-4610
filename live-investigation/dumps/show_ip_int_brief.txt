@@ -1,0 +1,6 @@
+show ip interface brief
+
+Interface    State  IP Address      IP Mask         TYPE            Method
+-----------  -----  --------------- --------------- --------------- ---------------
+
+(Routing) #

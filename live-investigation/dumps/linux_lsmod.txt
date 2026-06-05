@@ -1,0 +1,5 @@
+lsmod
+
+linux_user_bde 26125 0 - Live 0xaf018000 (PO)
+linux_kernel_bde 54953 1 linux_user_bde, Live 0xaf000000 (PO)
+# 

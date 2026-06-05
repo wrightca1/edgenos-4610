@@ -31,6 +31,10 @@ Working folder for bringing up our own NOS (EdgeNOS-class) on the
    NOS, and exactly where the open-source line falls.
 7. [`LICENSING.md`](LICENSING.md) — licenses on the OpenMDK / OpenBCM switch
    SDKs (source-available, redistributable, not OSI-libre) and the GPL boundary.
+8. [`nos/`](nos/) — the NOS build system (ONL-derived image + datapath app).
+9. [`live-investigation/`](live-investigation/) — read-only dynamic analysis of
+   a **live AS4610 running the stock Edgecore FASTPATH/ICOS NOS** on our exact
+   BCM56340: boot/BDE/SDK model, live chip port map + `config.bcm`, DMA params.
 
 ---
 

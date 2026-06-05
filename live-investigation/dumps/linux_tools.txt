@@ -1,0 +1,12 @@
+for t in tftp wget nc ftpput ftpget curl scp ssh mount; do which $t 2>/dev/nul
+l || echo "no $t"; done
+/usr/bin/tftp
+/usr/bin/wget
+no nc
+/usr/bin/ftpput
+/usr/bin/ftpget
+no curl
+no scp
+no ssh
+/bin/mount
+# 

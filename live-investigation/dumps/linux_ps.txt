@@ -1,0 +1,82 @@
+ps w 2>/dev/null || ps
+  PID USER       VSZ STAT COMMAND
+    1 root      1956 S    init
+    2 root         0 SW   [kthreadd]
+    3 root         0 SW   [ksoftirqd/0]
+    4 root         0 SW   [kworker/0:0]
+    5 root         0 SW<  [kworker/0:0H]
+    7 root         0 SW   [rcu_preempt]
+    8 root         0 SW   [rcu_sched]
+    9 root         0 SW   [rcu_bh]
+   10 root         0 SW   [migration/0]
+   11 root         0 SW   [migration/1]
+   12 root         0 SW   [ksoftirqd/1]
+   13 root         0 SW   [kworker/1:0]
+   14 root         0 SW<  [kworker/1:0H]
+   15 root         0 SW   [kdevtmpfs]
+   16 root         0 SW<  [netns]
+   17 root         0 SW   [kworker/u4:1]
+  175 root         0 SW<  [writeback]
+  177 root         0 SW<  [crypto]
+  178 root         0 SW<  [bioset]
+  180 root         0 SW<  [kblockd]
+  356 root         0 SW<  [ip_addr_conflic]
+  366 root         0 SW   [kswapd0]
+  367 root         0 SW<  [vmstat]
+  418 root         0 SW   [fsnotify_mark]
+ 1013 root         0 SW<  [bioset]
+ 1014 root         0 SW<  [bioset]
+ 1015 root         0 SW<  [bioset]
+ 1016 root         0 SW<  [bioset]
+ 1017 root         0 SW<  [bioset]
+ 1018 root         0 SW<  [bioset]
+ 1019 root         0 SW<  [bioset]
+ 1020 root         0 SW<  [bioset]
+ 1021 root         0 SW<  [bioset]
+ 1022 root         0 SW<  [bioset]
+ 1023 root         0 SW<  [bioset]
+ 1024 root         0 SW<  [bioset]
+ 1025 root         0 SW<  [bioset]
+ 1026 root         0 SW<  [bioset]
+ 1027 root         0 SW<  [bioset]
+ 1028 root         0 SW<  [bioset]
+ 1062 root         0 SW<  [bioset]
+ 1065 root         0 SW<  [bioset]
+ 1068 root         0 SW<  [bioset]
+ 1071 root         0 SW<  [bioset]
+ 1074 root         0 SW<  [bioset]
+ 1077 root         0 SW<  [bioset]
+ 1080 root         0 SW<  [bioset]
+ 1083 root         0 SW<  [bioset]
+ 1092 root         0 SW   [spi1]
+ 1137 root         0 SW<  [ipv6_addrconf]
+ 1146 root         0 SW<  [deferwq]
+ 1282 root         0 SW   [kworker/0:2]
+ 1285 root      2088 S    {rc.fastpath} /bin/sh /etc/rc.d/rc.fastpath
+ 1292 root         0 SW   [scsi_eh_0]
+ 1293 root         0 SW<  [scsi_tmf_0]
+ 1294 root         0 SW   [usb-storage]
+ 1297 root         0 SW<  [bioset]
+ 1350 root         0 SW<  [kworker/1:1H]
+ 1352 root         0 SW<  [kworker/0:1H]
+ 1396 root      1992 S    /mnt/application/procmgr
+ 1467 root         0 SW<  [loop0]
+ 1481 root         0 SW<  [loop1]
+ 1504 root      756m S    switchdrvr boot
+ 1505 root      8200 S    syncdb
+ 1684 root         0 SW   [kworker/1:2]
+ 1696 root     38612 S    vr_agent_app vr-agent-0
+ 1703 root     46852 S    ospf_app ospf-00
+ 1772 root     11280 S    ping_app ping-0
+ 1779 root     11280 S    traceroute_app traceroute-0
+ 1807 root     38420 S    restconf_app restconf-netconf-0
+ 1840 lighttpd  7136 S    lighttpd -D -f /mnt/application/lighttpd.conf
+ 1844 lighttpd 16760 S    /mnt/application/open_magnet 0
+ 1845 lighttpd  4760 S    /mnt/application/restconf_magnet 0
+ 1848 root     12888 S    netsnmp_app -C -f -c /mnt/application/snmpd.conf
+ 1865 root      6772 S    opensshd -D -f /mnt/application/sshd_config.netconf
+ 1880 root         0 SW   [kworker/u4:0]
+ 1889 root      1388 R    utelnetd -p 2324 -l/bin/sh -ilo
+ 1920 root      1960 S    /bin/sh
+ 1937 root      1960 R    ps w
+# 

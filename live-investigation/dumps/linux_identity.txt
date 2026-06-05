@@ -1,0 +1,14 @@
+
+Trying 127.0.0.1...
+
+Connected to 127.0.0.1
+
+id; uname -a; cat /etc/os-release 2>/dev/null; cat /proc/cmdline
+
+Linux System Login
+
+# id; uname -a; cat /etc/os-release 2>/dev/null; cat /proc/cmdline
+uid=0(root) gid=0(root)
+Linux (none) 4.4.39-Broadcom XLDK-4.2.1-ea1c3a24 #1 SMP PREEMPT Wed Mar 27 18:14:32 EDT 2019 armv7l GNU/Linux
+root=dev/ram console=ttyS0,115200n8 maxcpus=2 mem=2000M mtdparts=spi1.0:896k(u-boot),64k(shmoo),64k(env)
+# 
