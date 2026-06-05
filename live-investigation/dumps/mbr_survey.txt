@@ -1,0 +1,9 @@
+echo ===SDA_MBR===; dd if=/dev/sda bs=512 count=1 2>/dev/null | hexdump -C | t
+ail -6; echo ===SDB_MBR===; dd if=/dev/sdb bs=512 count=1 2>/dev/null | hexdump 
+-C | tail -6; echo DONE
+===SDA_MBR===
+/bin/sh: hexdump: not found
+===SDB_MBR===
+/bin/sh: hexdump: not found
+DONE
+# 

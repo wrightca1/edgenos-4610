@@ -1,0 +1,11 @@
+Disk /dev/sda: 61800448 sectors, 29.5 GiB
+Logical sector size: 512 bytes
+Disk identifier (GUID): 6A9387CD-F534-419C-9BA2-A1E39309BE27
+Partition table holds up to 128 entries
+First usable sector is 34, last usable sector is 61800414
+Partitions will be aligned on 2048-sector boundaries
+Total free space is 60227517 sectors (28.7 GiB)
+
+Number  Start (sector)    End (sector)  Size       Code  Name
+   1            2048          526335   256.0 MiB   8300  ACCTON-DIAG
+   2          526336         1574911   512.0 MiB   8300  DCSS

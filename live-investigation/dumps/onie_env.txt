@@ -1,0 +1,27 @@
+echo ===MOUNTS===; mount | grep sda; echo ===PARTS===; cat /proc/partit
+ions; echo ===IP===; ip addr show eth0 | grep inet; echo ===TOOLS===; which dd g
+zip sgdisk fdisk sfdisk partclone.ext4 fsck.ext2 ssh scp; echo DONE
+===MOUNTS===
+===PARTS===
+major minor  #blocks  name
+
+  31        0        896 mtdblock0
+  31        1         64 mtdblock1
+  31        2         64 mtdblock2
+  31        3       7168 mtdblock3
+   8        0   30900224 sda
+   8        1     262144 sda1
+   8        2     524288 sda2
+===IP===
+    inet 10.1.1.209/24 brd 10.1.1.255 scope global eth0
+    inet6 fe80::6f8:f8ff:fe15:a840/64 scope link 
+===TOOLS===
+/bin/dd
+/bin/gzip
+/usr/bin/sgdisk
+/sbin/fdisk
+/usr/sbin/fsck.ext2
+/usr/bin/ssh
+/usr/bin/scp
+DONE
+ONIE:/ # 

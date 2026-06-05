@@ -1,0 +1,4 @@
+find /mnt /etc /var /usr /root -iname "*licen*" -o -iname "*.lic" -o -iname "*
+entitle*" 2>/dev/null; echo DONE
+DONE
+# 

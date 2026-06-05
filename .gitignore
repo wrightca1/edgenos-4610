@@ -18,3 +18,6 @@ nos/datapath/mdk-app/linux-user-mdk
 *.swi
 *INSTALLER
 *.cpio.gz
+
+# Proprietary stock-NOS backup images (ICOS/diag/uboot) — keep LOCAL, do not push
+live-investigation/backup/

@@ -1,0 +1,12 @@
+ls -la /mnt/fastpath/image1 /mnt/fastpath/image2 2>/dev/null; echo ===DU===; d
+u -sh /mnt/fastpath/* 2>/dev/null | sort -rh | head -12; echo DONE
+-rw-r--r--    1 root     root      30488929 Jan  1  2001 /mnt/fastpath/image1
+-rw-r--r--    1 root     root      30488929 Jan  1  2001 /mnt/fastpath/image2
+===DU===
+sort: invalid option -- 'h'
+BusyBox v1.22.1 (2018-03-27 11:11:30 EDT) multi-call binary.
+
+Usage: sort [-nru] [FILE]...
+
+DONE
+# 

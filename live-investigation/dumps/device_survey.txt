@@ -1,0 +1,35 @@
+echo ===PARTS===; cat /proc/partitions; echo ===MTD===; cat /proc/mtd; echo ==
+=MTDSYS===; ls /sys/class/mtd 2>/dev/null; echo DONE
+===PARTS===
+major minor  #blocks  name
+
+   1        0       4096 ram0
+   1        1       4096 ram1
+   1        2       4096 ram2
+   1        3       4096 ram3
+   1        4       4096 ram4
+   1        5       4096 ram5
+   1        6       4096 ram6
+   1        7       4096 ram7
+   1        8       4096 ram8
+   1        9       4096 ram9
+   1       10       4096 ram10
+   1       11       4096 ram11
+   1       12       4096 ram12
+   1       13       4096 ram13
+   1       14       4096 ram14
+   1       15       4096 ram15
+   7        0        156 loop0
+   7        1         16 loop1
+   8        0   30900224 sda
+   8        1     262144 sda1
+   8        2     524288 sda2
+===MTD===
+dev:    size   erasesize  name
+mtd0: 000e0000 00010000 "u-boot"
+mtd1: 00010000 00010000 "shmoo"
+mtd2: 00010000 00010000 "env"
+===MTDSYS===
+mtd0    mtd0ro  mtd1    mtd1ro  mtd2    mtd2ro
+DONE
+# 

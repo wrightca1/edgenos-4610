@@ -1,0 +1,11 @@
+mkdir -p /tmp/p1; mount -o ro /dev/sda1 /tmp/p1 2>&1; ls -la /tmp/p1; echo ===
+; du -sh /tmp/p1/* 2>/dev/null; umount /tmp/p1; echo DONE
+drwxr-xr-x    3 root     root          1024 Feb  1  2001 .
+drwxrwxrwt   13 root     root             0 Jan  1 00:38 ..
+drwx------    2 root     root         12288 Jan  1  2001 lost+found
+-rw-r--r--    1 root     root      22969652 Jan  1  2001 uImage
+===
+12.0K   /tmp/p1/lost+found
+22.0M   /tmp/p1/uImage
+DONE
+# 

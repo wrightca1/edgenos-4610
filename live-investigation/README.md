@@ -155,5 +155,8 @@ imaging environment is **ONIE** (partitions unmounted; better tooling).
 ## Status / next
 
 - [x] Read-only dynamic analysis of the live ICOS NOS (this doc + dumps).
-- [ ] **ONIE partition backup** (disruptive — reboot into ONIE, image
-      partitions, transfer off via the network). Plan above; to be done next.
+- [x] **Full restorable backup** taken cleanly from ONIE rescue (sda unmounted),
+      SSH-streamed + verified (`e2fsck` clean, ICOS `image1`/`image2` intact).
+      Images in git-ignored `backup/`; procedure in [`RESTORE.md`](RESTORE.md).
+      No license found (features built-in); no hidden 2nd disk; box-specific data
+      (MAC/serial/keys) preserved in the U-Boot env + sda2 image.
