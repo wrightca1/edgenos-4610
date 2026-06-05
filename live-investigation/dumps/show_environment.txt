@@ -1,0 +1,29 @@
+show environment
+
+Temp (C)....................................... 48
+Fan Speed, RPM.................................
+Fan Duty Level.................................
+Temperature traps range: 0 to 45 degrees (Celsius)
+
+Temperature Sensors:
+Unit     Sensor  Description       Temp (C)    State              Max_Temp (C)
+----     ------  ----------------  ----------  -----------------  --------------
+1        1       Sensor-1          48          Normal             49
+
+Fans:
+Unit Fan Description    Type      Speed         Duty level    State
+---- --- -------------- --------- ------------- ------------- --------------
+No fans detected
+
+Power Modules:
+Unit     Power supply   Description        Type          State
+----     ------------   ----------------   ----------    --------------
+1        1              PS-1               Removable     Operational
+1        2              PS-2               Removable     Not powered
+
+Disk usage information:
+Unit   Total space (KB)   Free space (KB)   Used space (KB)   Utilization (%)
+----   ----------------   ---------------   ---------------   ---------------
+1               516,040           429,664            60,164               12
+
+(Routing) #

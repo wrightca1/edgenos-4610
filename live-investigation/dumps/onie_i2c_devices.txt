@@ -1,0 +1,10 @@
+for d in /sys/bus/i2c/devices/*; do n=$(cat $d/name 2>/dev/null); [ -n "$n" ] 
+&& echo "$(basename $d): $n"; done; echo DONE
+/bin/sh: basename: not found
+: 24c01
+/bin/sh: basename: not found
+: iproc-smb0
+/bin/sh: basename: not found
+: iproc-smb1
+DONE
+# 

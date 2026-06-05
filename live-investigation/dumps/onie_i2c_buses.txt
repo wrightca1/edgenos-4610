@@ -1,0 +1,7 @@
+i2cdetect -l 2>/dev/null | head -12; echo ===HWMON===; ls /sys/class/hwmon/ 2>
+/dev/null; for h in /sys/class/hwmon/hwmon*; do echo "$(basename $h): $(cat $h/n
+ame 2>/dev/null)"; done 2>/dev/null; echo DONE
+===HWMON===
+: 
+DONE
+# 

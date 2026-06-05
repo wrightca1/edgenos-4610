@@ -56,3 +56,24 @@ access model and port map, **confirmed** the PHY/SerDes drivers are already in
 our binary, and **supplied the board `config.bcm`** that a chip-generic SDK
 build can't know on its own. Remaining = integration + on-hardware execution,
 not discovery.
+
+## Environmentals (temp / PSU / fan / LED) — verified
+
+Our NOS is **ONL-derived**, so the full **ONLP platform layer** for `as4610-54`
+is already in the image (the `onlp-arm-accton-as4610-54-r0` package + the
+`accton_as4610_{cpld,fan,leds,psu}` kernel modules we build). Inventory:
+
+| Subsystem | Our ONLP support | Live box (`show environment`) |
+|---|---|---|
+| **Temp** | 3 thermal IDs: chassis **LM77** (`*-0048`) + PSU1 + PSU2 (PMBus) | Sensor-1 = **48 °C, Normal** ✅ |
+| **PSU** | 2 PSUs: EEPROM presence (`0x50/0x51`) + **YM-1921 PMBus** (`0x58/0x59`) telemetry | PS-1 **Operational**, PS-2 present/not-powered ✅ |
+| **Fan** | chassis fan(s) + PSU1/PSU2 fans (fault/rpm/duty); count is dynamic | **No chassis fans** — the 54T is effectively fanless (cooling via PSUs); ONLP handles `fan_count=0` ✅ |
+| **LED** | 7-seg stack-ID (DIG1/2 + dots), SYS, PRI, PSU1/2, STK1/2, FAN | (CPLD-driven; covered by `accton_as4610_leds`) |
+| **CPLD** | `accton_as4610_cpld` @ i2c `0x30` (PSU status, fan ctrl, LED, reset) | present (drives the above) |
+
+Hardware addresses match our device tree (CPLD `0x30`, LM77 `0x48`, PSU EEPROM
+`0x50/0x51`, PMBus `0x58/0x59`, RTC `0x68`). **Note:** ICOS exposes these via its
+own closed platform stack (no standard `hwmon`); under **our** ONL NOS the same
+chips bind to standard Linux i2c → sysfs and ONLP reads them. The live readings
+confirm the sensors physically work — so the environmental side is **complete**:
+nothing missing, just runs through ONLP instead of ICOS's stack.
