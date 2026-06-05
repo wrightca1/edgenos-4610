@@ -64,3 +64,34 @@ by the Warpcore ucode. Lower risk than the 84758, but not "free."
   step: extract from the backed-up ICOS image (we have it), or a PHY SDK.
 - Full link bring-up (any port) still needs a module + link partner to validate
   training/FEC — can't be proven by config alone.
+
+## Source search results (2026-06-05) — where the BCM84758 code is / isn't
+
+Searched **every** local tree (OpenMDK, OpenBCM, ONL, open-nos-ref, newnos,
+custom-nos, edgecore-5610-reverse-engineering):
+
+- **No `84758`-named driver or ucode anywhere** as source.
+- **OpenMDK has the full sibling family as SOURCE**: `bcm84756_drv.c` —
+  *"PHY driver for BCM84756, BCM84757 and BCM84759"* ("Quad SFI-XFI PHY") — plus a
+  **shared ~400 KB family ucode** (`bcm84756_ucode` + `_b0_ucode`). It matches
+  PMA-PMD ID1 `0x8670` and reads a chip-ID reg (`0xc802/3`) → `CHIP_IS_BCM84756_FAMILY`.
+- **OpenBCM 6.5.27**: only the enum `_phy_id_BCM84758` in `soc/phy.h` — legacy
+  8475x drivers were dropped; no driver, no ucode.
+- **84758 IS compiled into two binaries we hold**: the Cumulus `switchd` (5610
+  repo — its `phy list` includes `BCM84758`) and the **live ICOS image**
+  (`backup/sda2.img.gz` → `image1/switchdrvr`). Firmware recoverable from either.
+
+### Reframed resolution — likely a driver-ID patch, not a firmware hunt
+
+The 84758 is the **same family** as the well-supported 84756, and Broadcom's
+8475x family ucode is typically shared. So the most promising path is:
+1. **Adapt OpenMDK's `bcm84756` driver**: add the 84758 PMA-PMD ID1 (`0x86f0`) +
+   chip-ID (`0x00084758`) to the match tables (`CHIP_IS_BCM84756_FAMILY`, devlist),
+   and reuse the existing `bcm84756_ucode`. Try it on hardware.
+2. **Only if the family ucode is rejected** by the 84758, extract the
+   84758-specific ucode from the Cumulus `switchd` or the ICOS `switchdrvr`
+   (both on disk) and pair it with the adapted driver.
+
+This is far more contained than the 5610's PHY battle: we have the family driver
++ shared ucode as open source, and two binary fallbacks for the exact firmware.
+**Still needs a 10G module + on-hardware test to confirm link/training.**
