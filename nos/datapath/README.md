@@ -44,6 +44,12 @@ BCM56340 silicon through the Broadcom SDK. This directory will hold that agent.
 
 ## Status
 
+**Verified against the live stock NOS (2026-06-05):** see
+[`VERIFICATION.md`](VERIFICATION.md) — the running ICOS box confirmed our access
+model + port map, the BCM5464/Warpcore PHY drivers are already in our binary, and
+it gave us the board [`config.bcm.as4610-54t`](config.bcm.as4610-54t) (per-port
+PHY MDIO addresses etc.) a chip-generic build couldn't know. We have what we need.
+
 **Built (2026-06-04): `mdk-app/linux-user-mdk` — armhf datapath tool.** ✅
 
 A cross-compiled OpenMDK CDK/BMD shell for the AS4610-54T, our first on-box
