@@ -95,3 +95,24 @@ The 84758 is the **same family** as the well-supported 84756, and Broadcom's
 This is far more contained than the 5610's PHY battle: we have the family driver
 + shared ucode as open source, and two binary fallbacks for the exact firmware.
 **Still needs a 10G module + on-hardware test to confirm link/training.**
+
+## Sourcing the BCM84758 — internet search + ICOS extraction (2026-06-05)
+
+**Internet: not publicly available.** Broadcom's upstream OpenMDK on GitHub has
+`bcm84756` but **no `bcm84758`**. OpenBCM 6.5.27 = enum only. The 84758 is a real
+Broadcom Quad 10GbE SFI-XFI PHY (no MACsec; 84756 has it), gated behind Broadcom
+docSAFE/contract — no open driver+firmware.
+
+**ICOS extraction: the binary is now in hand.** Pulled the live ICOS `switchdrvr`
+(58 MB, `backup/icos-extract/switchdrvr`, git-ignored) + `devshell_symbols.gz`
+(646 KB). `switchdrvr` drives the 84758, so its driver+ucode are inside it. But:
+- It is **stripped** (no symbol table); "BCM84758" is built from the chip-ID at
+  runtime, not a static string — can't grep the ucode by name.
+- The 84758 ucode is **NOT** OpenMDK's 84756 ucode — the 32 KB
+  `bcm84756_ucode`/`_b0` blobs are **absent** from `switchdrvr` (verified). With
+  `config.bcm` `phy_ext_rom_boot=0` (SDK downloads the ucode, not a PHY ROM), the
+  84758-specific firmware lives in this binary.
+
+**Carve = focused Ghidra RE next:** disassemble the 84758 PHY-init path in
+`switchdrvr`, find the ucode data pointer + length, carve the blob — the 5610-class
+work, but now we possess the binary that contains it (+ symbol file to assist).
