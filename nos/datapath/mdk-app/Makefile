@@ -180,7 +180,7 @@ BOBJS = $(addprefix $(BLDDIR)/,$(OBJS))
 APPL = $(DSTDIR)/linux-user-mdk
 
 # EdgeNOS data-plane daemon (our code; reuses the BDE shim, no interactive shell)
-EOBJS = edged.o linux_shbde.o
+EOBJS = edged.o edged_l3.o linux_shbde.o
 BEOBJS = $(addprefix $(BLDDIR)/,$(EOBJS))
 EDGED = $(DSTDIR)/edged
 

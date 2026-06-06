@@ -75,6 +75,7 @@ union i2c_smbus_data {
 #include <phy/phy_aer_iblk.h>
 
 #include "linux_shbde.h"
+#include "edged_l3.h"
 
 /* AS4610-54T default: BCM56340 (Helix4) CMIC at on-die phys 0x48000000. */
 #define EDGED_DEFAULT_UNIT  "0x14e4:0xb340:0x01@0x48000000"
@@ -1223,9 +1224,11 @@ static void
 usage(const char *p)
 {
     fprintf(stderr,
-        "usage: %s [--unit V:D:R@BASE] [--keep]\n"
-        "  --unit  device spec (default: %s)\n"
-        "  --keep  stay resident: monitor link + re-sync MAC on link changes\n",
+        "usage: %s [--unit V:D:R@BASE] [--keep] [--l3 FILE] [--l3-show]\n"
+        "  --unit     device spec (default: %s)\n"
+        "  --keep     stay resident: monitor link + re-sync MAC on link changes\n"
+        "  --l3 FILE  program IPv4 L3 forwarding from config FILE\n"
+        "  --l3-show  read back + print the programmed L3 tables\n",
         p, EDGED_DEFAULT_UNIT);
 }
 
@@ -1289,6 +1292,8 @@ main(int argc, char *argv[])
     int keep = 0;
     int scan = 0;
     int try_10g = 0;   /* --try-10g: experimental SFP+ 10G dyn-config (breaks L2) */
+    const char *l3_conf = NULL;  /* --l3 <file>: program IPv4 L3 from a config */
+    int l3_show_flag = 0;        /* --l3-show: read back L3 tables after programming */
     int unit = 0;
     int rc, i, port;
 
@@ -1337,6 +1342,11 @@ main(int argc, char *argv[])
             scan = 4;
         } else if (!strcmp(argv[i], "--try-10g")) {
             try_10g = 1;
+        } else if (!strcmp(argv[i], "--l3")) {
+            if (++i >= argc) { usage(argv[0]); return 2; }
+            l3_conf = argv[i];
+        } else if (!strcmp(argv[i], "--l3-show")) {
+            l3_show_flag = 1;
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
             usage(argv[0]); return 0;
         } else {
@@ -1838,6 +1848,19 @@ main(int argc, char *argv[])
                 LOG("    (no Warpcore phy_ctrl in chain)");
             }
         }
+    }
+
+    /* IPv4 L3 hardware forwarding: program routed interfaces + routes from the
+     * config (runs after L2/port bring-up so the VLANs/ports exist). The chip
+     * then routes between subnets in hardware — no CPU involvement. */
+    if (l3_conf) {
+        LOG("L3: programming IPv4 forwarding from %s", l3_conf);
+        if (l3_config_load(unit, l3_conf) < 0) {
+            LOG("L3: config had errors (see edged-l3 lines above)");
+        }
+    }
+    if (l3_show_flag) {
+        l3_show(unit);
     }
 
     if (keep) {
