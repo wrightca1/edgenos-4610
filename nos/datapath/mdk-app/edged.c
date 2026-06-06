@@ -797,6 +797,10 @@ copper_up(int unit)
 #define X84_TX_DISABLE  0x0009
 #define X84_GENSIG_8071 0xcd16
 #define X84_AER_ADDR    0xc702
+#define X84_PMAD_CTRL   0x0000   /* PMA/PMD control 1: speed-select bits */
+#define X84_PMAD_CTRL2  0x0007   /* PMA/PMD control 2: PMA type (low nibble) */
+#define X84_SS_10G      0x2040   /* MII_CTRL_SS_MSB(b6) | SS_LSB(b13) = 10G */
+#define X84_PMA_TYPE_10G_LRM 0x8 /* PMA type field = 10GBASE-LRM */
 #define X84_RXLOS_OVERRIDE 0xc0c0
 #define X84_MODABS_OVERRIDE 0x0808
 #define X84_RXLOS_LVL   (1u << 9)
@@ -820,6 +824,15 @@ sfp_tx_enable(int unit)
         uint32_t addr = CDK_XGSM_MIIM_EBUS(2) | s;
         uint32_t v = 0;
         cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_AER_ADDR, 0);  /* lane 0 */
+
+        /* (0) Set the 84758 PMA to 10G (robo2 phy_84740_speed_set). OpenMDK loads
+         * the ucode but NEVER configures the speed, so the media datapath never
+         * runs and the PMD signal-detect stays 0. CTRL1 = speed-select MSB|LSB
+         * (0x2040 = 10G); CTRL2 PMA-type field (low nibble) = 10GBASE-LRM (0x8). */
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_PMAD_CTRL, X84_SS_10G);
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_PMAD_CTRL2, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_PMAD_CTRL2,
+                            (v & ~0xfu) | X84_PMA_TYPE_10G_LRM);
 
         /* (1) OPTICAL_CFG override + MOD_PRESENCE (ignore the pins, drive present). */
         cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &v);
@@ -1232,26 +1245,37 @@ main(int argc, char *argv[])
          * moment to detect light / PCS to lock, then read status. */
         { struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 }; nanosleep(&ts, NULL); }
 
-        /* SFP+ 84758 status: read PMD signal-detect + PCS block-lock per SFP+ at
-         * EBUS2 0x80-0x83 (xe0-3). Tells us if the fiber RX has light + PCS lock. */
+        /* SFP+ 84758 status across all MMDs at EBUS2 0x80-0x83 (xe0-3) — pinpoint
+         * where the 10G chain breaks: media PMD (sees fiber light?), media PCS
+         * (10GBASE-R block-lock on the fiber?), system PHY-XS (locks the Warpcore
+         * XFI?). 84758 link = (PMD link) AND (Warpcore serdes link) per robo2. */
         {
             int s;
-            LOG("SFP+ 84758 status (EBUS2 0x80-0x83 = xe0-3):");
+            LOG("SFP+ 84758 per-MMD status (1=PMA/PMD media, 3=PCS media, 4=PHY-XS system):");
             for (s = 0; s < 4; s++) {
                 uint32_t addr = CDK_XGSM_MIIM_EBUS(2) | s;
-                uint32_t pmd_sd = 0, blk = 0, cfg = 0, sig = 0, txd = 0, gs = 0;
-                cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x000a, &pmd_sd);  /* PMD signal detect */
-                cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0020, &blk);     /* 10GBASE-R PCS: b0=block lock */
-                cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &cfg);
-                cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_SIGLVL, &sig);
-                cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_TX_DISABLE, &txd);
-                cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_GENSIG_8071, &gs);
-                LOG("  xe%d(0x%02x) sigdet=0x%04x blklock=0x%04x | c8e4=0x%04x "
-                    "c8e5=0x%04x 1.0009=0x%04x cd16=0x%04x %s", s, addr,
-                    pmd_sd & 0xffff, blk & 0xffff, cfg & 0xffff, sig & 0xffff,
-                    txd & 0xffff, gs & 0xffff,
-                    (blk & 0x1) ? "<== BLOCK LOCK" :
-                    (pmd_sd & 0x1) ? "(signal,no lock)" : "(no signal)");
+                uint32_t pmd_st=0, pmd_sd=0, pcs_st=0, blk=0, ber=0, xs_st=0, xs_al=0;
+                uint32_t c1=0, c2=0, gp=0;
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_PMAD_CTRL,  &c1); /* readback speed cfg */
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_PMAD_CTRL2, &c2);
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0xc820, &gp);  /* SPEED_LINK_DETECT_STAT (micro) */
+                LOG("    xe%d cfg-readback: 1.0000=%04x 1.0007=%04x c820=%04x",
+                    s, c1 & 0xffff, c2 & 0xffff, gp & 0xffff);
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x0001, &pmd_st); /* PMA/PMD status1 b2=rxlink */
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x000a, &pmd_sd); /* PMD signal detect */
+                cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0001, &pcs_st); /* PCS status1 b2=rxlink */
+                cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0020, &blk);    /* 10GBASE-R PCS b0=blocklock,b1=hiber */
+                cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0021, &ber);    /* 10GBASE-R BER/errblk counts */
+                cdk_xgsm_miim_read(unit, addr, (4 << 16) | 0x0001, &xs_st);  /* PHY-XS status1 b2=rxlink */
+                cdk_xgsm_miim_read(unit, addr, (4 << 16) | 0x0018, &xs_al);  /* PHY-XS lane align b12=align */
+                LOG("  xe%d(0x%02x): PMD[st1=%04x sd=%04x rxlink=%d] PCS[st1=%04x "
+                    "blklk(3.20)=%04x rxlink=%d] XS[st1=%04x align(4.18)=%04x rxlink=%d]%s",
+                    s, addr,
+                    pmd_st&0xffff, pmd_sd&0xffff, !!(pmd_st&0x4),
+                    pcs_st&0xffff, blk&0xffff, !!(pcs_st&0x4),
+                    xs_st&0xffff, xs_al&0xffff, !!(xs_st&0x4),
+                    (blk&0x1) ? "  <== MEDIA PCS LOCK" : "");
+                (void)ber;
             }
         }
     }

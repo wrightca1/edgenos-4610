@@ -78,13 +78,28 @@ two of our guesses — `OPTICAL_SIG_LVL = 0xc800` (not 0xc8e5) and the level mas
 `RXLOS_LVL=b9 / MOD_ABS_LVL=b8`. `sfp_tx_enable()` now sets the c8e4 override **and**
 the c800 levels (OpenMDK omits the latter, which had pinned `sigdet=0`).
 
-But that alone doesn't lock the link: the open-source `phy_84740_link_get` shows
-**84758 link = (84758 PMD link) AND (internal Warpcore SerDes link)** — so the
-gate is now the **Warpcore 10G lane lock** (+ the 84758 system/media PCS at 10G),
-the same per-lane RX-calibration layer documented for the 40G QSFP work (OpenMDK
-lacks the full SDK's `independent_lane_init`). That SerDes physical-layer lock is
-the next focused effort. The full robo2 driver (`phy84740.c` + `phy84740.h`, kept
-local in `phy84758-src/broadcom-official/`) is the reference for it.
+But that alone doesn't lock the link. Per-MMD diagnosis (`edged --up-check`) on the
+plugged ports pinpoints where the 10G chain breaks:
+
+```
+xe0/xe1: PMD(1) sd=0 rxlink=0 | PCS(3) blocklock=0 rxlink=0 | PHY-XS(4) st=0000
+         cfg-readback 1.0000=2040 1.0007=0008 (10G + 10G-LRM)  c820=e044 (micro up)
+```
+
+So the 84758 **is** correctly configured for 10G (speed-select + PMA-type written
+and read back; ucode/micro running) and the optics are healthy — but its **media
+PMD detects no valid signal** (`sd=0`) so the 10GBASE-R PCS never block-locks.
+Also ported from robo2: the 10G PMA `speed_set` (`1.0000=0x2040`, `1.0007` PMA-type
+`10G_LRM`) — OpenMDK omits even that.
+
+What's missing is the rest of the **robo2 `phy_84740_init` datapath bring-up**: the
+retimer/medium mode, the system↔media PCS linkage, and the internal **Warpcore 10G
+lane lock** that feeds valid 10G into the 84758 (open-source `phy_84740_link_get`:
+84758 link = 84758-PMD AND Warpcore-serdes link). This is the same per-lane
+RX-calibration layer as the 40G QSFP work (OpenMDK lacks `independent_lane_init`).
+The full robo2 driver (`phy84740.c` + `phy84740.h` in
+`phy84758-src/broadcom-official/`) is the reference; porting its `init` datapath
+sequence (+ verifying the Warpcore lock) is the next focused effort.
 
 ## OpenMDK changes
 
