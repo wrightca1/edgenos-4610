@@ -91,3 +91,136 @@ e2fsck -fn sda2  ->  DCSS: 52/32768 files, 17103/131072 blocks  (clean)
 debugfs stat /image1,/image2  ->  Size 30488929 each
 gzip -t sda1.img.gz, sda2.img.gz  ->  OK ;  md5 in backup/MD5SUMS
 ```
+
+---
+
+# VERIFIED end-to-end walkthrough: ONL/edged → ICOS (2026-06-06)
+
+The steps above are correct in outline but **left out several real-world gotchas**
+that bit us doing the actual restore from a *running EdgeNOS/ONL install* (not from a
+pristine ONIE install). This section is the **tested, exact procedure** with every
+trap called out. Serial recovery console throughout: **`/dev/ttyUSB1` @115200**
+(helpers `tools/catch_uboot.py`, `tools/sercmd.py`). Logins: ONL `root`/`onl`,
+ONIE `root` (key only), ICOS `admin`/blank then `enable`/blank.
+
+> Context: the ONL installer **repartitioned the USB disk to an MBR table** with 4
+> partitions (ONL-BOOT/CONFIG/IMAGES/DATA) and rewrote U-Boot `nos_bootcmd` to boot
+> the ONL `.itb`. The original ICOS GPT (2 partitions) was gone — so this is a full
+> restore, not a boot toggle.
+
+## 0. Secure the return path FIRST (so you can get back to edged)
+Before wiping anything, pull the exact running image + confirm the backup:
+```sh
+# from capture host — exact ONL image currently booted (return-to-edged artifact):
+sshpass -p onl scp root@10.1.1.209:/mnt/onl/images/ONL-*_ARMHF.swi \
+        backup/ONL-edgenos-4610-2026-06-04.swi
+( cd backup && md5sum -c MD5SUMS )      # ICOS backup integrity
+ls nos/datapath/mdk-app/edged            # the daemon binary to re-push
+```
+
+## 1. Get into ONIE rescue
+```sh
+# trigger reboot from the running ONL (over ssh), THEN catch U-Boot over serial:
+sshpass -p onl ssh root@10.1.1.209 'sync; nohup reboot >/dev/null 2>&1 &'
+python3 tools/catch_uboot.py 70 ' '     # spams SPACE to interrupt autoboot
+```
+- **GOTCHA — U-Boot prompt is `accton_as4610-54->`.** It is *not* in
+  `catch_uboot.py`'s PROMPTS list, so the tool prints `[TIMEOUT — no prompt detected]`
+  even though it **did** interrupt autoboot — the `accton_as4610-54->` prompt is sitting
+  there. Just proceed.
+- At the U-Boot prompt, enter rescue (send over serial with `sercmd.py`-style write):
+  ```
+  run onie_rescue
+  ```
+  → boots the ONIE ramdisk in **Rescue Mode** (installer disabled).
+
+## 2. ONIE rescue networking + ssh access
+- **ONIE got `10.1.1.209` via DHCPv4** on `eth0` automatically (there *is* a DHCP
+  server on this net), and auto-started **dropbear ssh + telnetd**. If no DHCP, set a
+  static IP over serial: `ifconfig eth0 10.1.1.209 netmask 255.255.255.0 up`.
+- **GOTCHA — ONIE rescue is a fresh ramdisk every boot**: `/root/.ssh` is tmpfs and is
+  **wiped on each ONIE boot**. Re-install your pubkey over serial each time:
+  ```sh
+  mkdir -p /root/.ssh; chmod 700 /root/.ssh
+  echo '<your ssh-rsa pubkey>' > /root/.ssh/authorized_keys
+  chmod 600 /root/.ssh/authorized_keys
+  ```
+  Use an **RSA** key — dropbear here is the 2017/legacy build.
+- **GOTCHA — host→ONIE ssh needs legacy crypto flags:**
+  ```sh
+  SSHO='-o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa
+        -o KexAlgorithms=+diffie-hellman-group1-sha1 -o StrictHostKeyChecking=no'
+  ssh $SSHO -i ~/.ssh/id_rsa_switch root@10.1.1.209 'echo ok'
+  ```
+
+## 3. Transfer the backup to ONIE `/tmp`
+- **GOTCHA — `scp` must use `-O` (legacy scp protocol).** ONIE dropbear has **no SFTP
+  subsystem**; modern OpenSSH scp defaults to SFTP and fails with
+  `subsystem request failed on channel 0 / Connection closed`.
+  ```sh
+  scp -O $SSHO -i ~/.ssh/id_rsa_switch \
+      backup/sda.gpt backup/sda1.img.gz backup/sda2.img.gz backup/mtd2_env.bin \
+      root@10.1.1.209:/tmp/
+  ```
+- ONIE `/tmp` is a ~1 GB tmpfs — the set (gpt + 22M + 58M + 64K) fits easily. Verify
+  `md5sum` on the box against `backup/MD5SUMS`.
+
+## 4. Restore GPT + partitions + env (the corrected step order)
+ONIE has **only `sgdisk` + `dd` + `gzip`** for this — **no `partprobe`, `partx`,
+`blockdev`, `flashcp`, `flash_erase`, or `fw_setenv`.**
+```sh
+# (a) GOTCHA: ONL left a valid MBR -> sgdisk --load-backup REFUSES it
+#     ("Non-GPT disk; not saving changes. Use -g to override.").
+#     Must ZAP first, then load:
+sgdisk --zap-all /dev/sda
+sgdisk --load-backup=/tmp/sda.gpt /dev/sda      # restores GUID 6A9387CD..., 2 parts
+sgdisk -p /dev/sda                              # verify: ACCTON-DIAG 256M + DCSS 512M
+cat /proc/partitions                            # sgdisk auto-BLKRRPART -> sda1/sda2 reread
+                                                # (no partprobe needed/available)
+# (b) partition contents
+gunzip -c /tmp/sda1.img.gz | dd of=/dev/sda1 bs=1M
+gunzip -c /tmp/sda2.img.gz | dd of=/dev/sda2 bs=1M
+# (c) GOTCHA: no flashcp in ONIE -> write the U-Boot env via the mtdblock layer
+#     (mtdblock does read-modify-erase-write; mtd2_env.bin is exactly one 64K eraseblock)
+dd if=/tmp/mtd2_env.bin of=/dev/mtdblock2 bs=64k
+sync
+# (d) sanity: DCSS mounts and holds the ICOS images
+mkdir -p /mnt/dcss; mount -t ext4 /dev/sda2 /mnt/dcss
+ls -l /mnt/dcss/image1 /mnt/dcss/image2          # 30488929 bytes each
+umount /mnt/dcss
+```
+
+## 5. Reboot into ICOS
+- **GOTCHA — ONIE rescue has no `reboot` in PATH** (`sh: reboot: not found`). Use sysrq:
+  ```sh
+  sync; echo 1 > /proc/sys/kernel/sysrq; echo b > /proc/sysrq-trigger
+  ```
+- U-Boot `bootcmd → nos_bootcmd` (now the restored **ICOS** version: `run bootimage1`)
+  → loads `image1` from `usb:2` (DCSS) → ICOS.
+- ICOS runs an **e2fsck on DCSS** ("was not cleanly unmounted, check forced") and
+  auto-fixes one orphaned inode — **expected and harmless** (we just dd'd it).
+- ICOS startup menu auto-selects **"1 - Start ICOS Application"** after 3 s.
+- Log in `admin` / (blank) → `enable` / (blank) → `(Routing) #`.
+- Confirm: `show version` → `Accton AS4610-54T, 3.4.3.7`, SN `EC2025000934`,
+  `BCM56340_A0`. ✅
+
+## 6. Return to ONL/edged afterward
+Reinstall the saved SWI via ONIE, then re-push edged:
+```sh
+# boot ONIE install mode (from U-Boot: 'run onie_uninstall' then 'run onie_install',
+# or from ICOS/ONIE 'onie-nos-install <swi>'), pointing at the pulled SWI.
+# After ONL boots, recover mgmt over serial (the SWI reverts ma1 IP + sshd each boot):
+ip addr add 10.1.1.209/24 dev ma1; ip link set ma1 up
+echo 'PermitRootLogin yes'        >> /etc/ssh/sshd_config
+echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config
+/etc/init.d/ssh restart
+# re-push the daemon (tmpfs, wiped on reboot):
+scp nos/datapath/mdk-app/edged root@10.1.1.209:/tmp/edged
+```
+
+## Reboot-recovery quick card (applies to ONL boots in general)
+Every ONL/EdgeNOS reboot on this box reverts two things (no persistent config):
+1. **`ma1` has no IP** — ONL defaults to DHCP; if no lease, re-add static over serial.
+2. **`sshd_config` resets** — `PermitRootLogin`/`PasswordAuthentication` gone; re-append + restart ssh.
+Plus **`/tmp/edged` is wiped** (tmpfs) — re-scp it. Serial console `/dev/ttyUSB1`
+@115200 is an always-available root shell (ONL) for recovery.
