@@ -1,0 +1,57 @@
+diff --git a/phy/PKG/bus/bcm956340k_miim_ext/bcm956340k_miim_ext.c b/phy/PKG/bus/bcm956340k_miim_ext/bcm956340k_miim_ext.c
+index d79ec3e..397b04b 100644
+--- a/phy/PKG/bus/bcm956340k_miim_ext/bcm956340k_miim_ext.c
++++ b/phy/PKG/bus/bcm956340k_miim_ext/bcm956340k_miim_ext.c
+@@ -17,19 +17,47 @@
+ 
+ #include <phy/phy.h>
+ 
++/* AS4610-54T copper (BCM54282) MDIO addresses, VERBATIM from the live board's
++ * config.bcm (port_phy_addr_ge0..47). The octal 54282s leave a 2-address gap
++ * between packages, so this is a lookup, NOT a formula. The board splits the 48
++ * copper ports across two external MIIM buses: jacks 1-24 (ge0-23) on EBUS0 at
++ * 0x01-0x1c, jacks 25-48 (ge24-47) on EBUS1 at the same low addrs (config.bcm
++ * marks the upper bank with the 0x20 bit). Empirically verified by sweeping the
++ * CMIC MIIM (edged --scan-link): 54282 id 600d:845b answers at exactly these. */
++static const uint8_t _ge_phy_addr[48] = {
++    0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,  /* ge0-7   */
++    0x0b,0x0c,0x0d,0x0e,0x0f,0x10,0x11,0x12,  /* ge8-15  */
++    0x15,0x16,0x17,0x18,0x19,0x1a,0x1b,0x1c,  /* ge16-23 */
++    0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,  /* ge24-31 */
++    0x2b,0x2c,0x2d,0x2e,0x2f,0x30,0x31,0x32,  /* ge32-39 */
++    0x35,0x36,0x37,0x38,0x39,0x3a,0x3b,0x3c,  /* ge40-47 */
++};
++
+ static uint32_t
+ _phy_addr(int port)
+ {
++    /* Copper ge ports: logical port P (1-48) -> ge(P-1). ge0-23 on EBUS0,
++     * ge24-47 on EBUS1 (low 5 bits of the config.bcm addr; the 0x20 bit was the
++     * board's bus marker). */
++    if (port >= 1 && port <= 24) {
++        return CDK_XGSM_MIIM_EBUS(0) | _ge_phy_addr[port - 1];
++    }
++    if (port >= 25 && port <= 48) {
++        return CDK_XGSM_MIIM_EBUS(1) | (_ge_phy_addr[port - 1] & 0x1f);
++    }
++    /* 4x 10G SFP+ (BCM84758): config.bcm port_phy_addr_xe0..3 = 0x40-0x43, which
++     * the CMIC MIIM exposes on EBUS2 (edged --scan-mdio found 84758 at EBUS2
++     * 0x00-0x03). edged also force-loads the 84758 ucode outside this probe. */
++    if (port >= 53 && port <= 56) {
++        return (port - 53) + CDK_XGSM_MIIM_EBUS(2);
++    }
+     if ((port == 49) || (port == 50)) {
+         return 0x3 + CDK_XGSM_MIIM_EBUS(3);
+     }
+     if (port > 52) {
+         return (port - 52) + CDK_XGSM_MIIM_EBUS(2);
+-    } 
+-    if (port > 24) {
+-        return (port - 24) + (((port - 24) - 1) >> 3) + CDK_XGSM_MIIM_EBUS(1);
+-    } 
+-    return port + ((port - 1) >> 3) + CDK_XGSM_MIIM_EBUS(0);
++    }
++    return CDK_XGSM_MIIM_EBUS(0);
+ }
+ 
+ static int 

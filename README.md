@@ -83,6 +83,31 @@ See [`NOS_BUILD_PLAN.md`](NOS_BUILD_PLAN.md) for the concrete plan.
 
 ---
 
+## Project status (2026-06-06)
+
+EdgeNOS-4610 (ONL-based) is **installed, booted, and forwarding** on a live
+AS4610-54T (`ma1`, ssh root). The open data-plane daemon **`edged`**
+([`nos/datapath/mdk-app/edged.c`](nos/datapath/mdk-app/edged.c)) drives the
+BCM56340 over the on-die CMIC via `/dev/mem` (no proprietary kernel module),
+linking OpenMDK's source-available CDK/BMD/PHY.
+
+| Front-panel plane | State |
+|---|---|
+| Platform/ONLP (sensors, fans, PSU, optics, LED) | ✅ up |
+| Chip init + L2 forwarding (VLAN/STP, 55/55 ports) | ✅ working |
+| **48× 1G copper (BCM54282)** | ✅ **links** (jack-to-jack at 1G) |
+| **4× 10G SFP+ (BCM84758)** | ✅ MAC at 10G, ucode loaded, lasers on, light flowing |
+| 4× 10G SFP+ optical PCS lock | ⏳ Warpcore 10G SerDes / 84758 media-RX (last gap) |
+
+Details: [`nos/datapath/DATAPATH_STATUS.md`](nos/datapath/DATAPATH_STATUS.md).
+The few OpenMDK changes this board needs are captured as patches in
+[`nos/datapath/openmdk-patches/`](nos/datapath/openmdk-patches/) (OpenMDK is a
+separate upstream repo, so we patch a clone rather than fork it). The BCM84758
+PHY firmware is Broadcom source-available and kept local per the proprietary-
+stays-local convention.
+
+---
+
 ## Provenance / ethics
 
 Same standard as the 5610 work: only hardware we own, public datasheets,

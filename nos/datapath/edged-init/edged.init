@@ -1,0 +1,59 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          edged
+# Required-Start:    $local_fs $remote_fs $syslog
+# Required-Stop:     $local_fs $remote_fs $syslog
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: EdgeNOS-4610 data-plane bring-up (BCM56340 / Helix4)
+# Description:       Attaches the on-die CMIC via /dev/mem, resets + inits the
+#                    switch core, brings up L2 switching and configures ports.
+### END INIT INFO
+#
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 EdgeNOS project.
+#
+# sysvinit script for edged. ONL uses sysvinit (no systemd). edged performs a
+# one-shot chip bring-up (init + exit); the chip retains its programmed state,
+# so a resident daemon is not yet required. When edged grows a control loop,
+# switch to `edged --keep &` + a pidfile here.
+
+PATH=/sbin:/usr/sbin:/bin:/usr/bin
+EDGED=/usr/bin/edged
+LOG=/var/log/edged.log
+
+# Fallback to the persistent partition if not baked into the rootfs yet.
+[ -x "$EDGED" ] || EDGED=/mnt/onl/data/edge/edged
+
+case "$1" in
+  start)
+    if [ ! -x "$EDGED" ]; then
+        echo "edged: binary not found ($EDGED)" >&2
+        exit 1
+    fi
+    echo "Starting edged: BCM56340 data-plane bring-up"
+    # /dev/mem access needs root; STRICT_DEVMEM is off in the ONL kernel.
+    "$EDGED" >> "$LOG" 2>&1
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        echo "edged: data plane UP (see $LOG)"
+    else
+        echo "edged: FAILED rc=$rc (see $LOG)" >&2
+    fi
+    exit $rc
+    ;;
+  stop)
+    # one-shot bring-up: nothing resident to stop (chip state persists)
+    exit 0
+    ;;
+  restart|force-reload)
+    "$0" start
+    ;;
+  status)
+    [ -x "$EDGED" ] && echo "edged installed at $EDGED" || echo "edged not installed"
+    ;;
+  *)
+    echo "usage: $0 {start|stop|restart|status}" >&2
+    exit 1
+    ;;
+esac

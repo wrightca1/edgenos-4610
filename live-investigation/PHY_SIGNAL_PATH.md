@@ -57,6 +57,85 @@ lane map + per-lane SerDes tuning (TX FIR/pre-emphasis) + any FEC — captured i
 the live `config.bcm` (`../../nos/datapath/config.bcm.as4610-54t`) and exercised
 by the Warpcore ucode. Lower risk than the 84758, but not "free."
 
+### Lane wiring DECODED (2026-06-05) — all 4 lanes wired per cage, bonded as one 20G port
+
+Resolved how the QSFP cages are laned, from three corroborating sources:
+
+1. **CDK chip block table** (`OpenMDK/.../bcm56340_a0_chip.c`): the BCM56340 has
+   Warpcore (XWPORT) blocks, each = **4 physical ports = 4 SerDes lanes**:
+   - block 13 → phys 53–56  → the **four 10G SFP+** (xe0–3): one Warpcore *split*
+     into 4 independent single-lane 10G ports.
+   - block 14 → phys 57–60  → **QSFP1 (xe4)**, a whole dedicated Warpcore.
+   - block 15 → phys 61–64  → **QSFP2 (xe5)**, a whole dedicated Warpcore.
+2. **Name format** decoded via the 5610 Rosetta (`edgecore-5610-reverse-
+   engineering/.../10_phy_info_xe0.txt` + `SERDES_WC_INIT.md`): legacy format is
+   `WC-<rev>/<block>/<lane>`. On the 5610, a 4-lane Warpcore appears as **four**
+   lines `WC-B0/16/0..3` (4 single-lane 10G ports). On the **4610**, block 14
+   appears as **one** line `WC-B1/14/4` (and block 15 as `WC-B1/15/4`) — a single
+   bonded port, the trailing `4` = **lane width 4**, not a lane index (indices are
+   0–3).
+3. **MDIO spacing**: xe0–3 are consecutive (0x40–0x43, 1 addr each); xe4=0xc5 and
+   xe5=0xc9 are spaced by 4 = one full 4-lane block each.
+
+**Conclusion:** each QSFP cage has its **own dedicated 4-lane Warpcore, all 4
+lanes wired and bonded** into a single logical port. 20G = **4 lanes × ~5 Gbps**
+(not 2×10G). The 20G ceiling is the chip's **128 Gbps fabric budget**
+(48×1G + 4×10G + 2×20G = 128, exactly non-blocking), NOT a lane shortage.
+
+**Implication — NO standard 40G (corrected; supersedes an earlier wrong claim).**
+The SerDes lanes are electrically 40G-class (the chip's 42G configs prove these
+4 lanes can clock ~10G each), but the 4610 cannot present a standard 40G port:
+
+1. **Port-config / fabric cap.** The BCM56340 BMD has 14 SKU port-config maps
+   (`bcm56340_a0_bmd_attach.c`, `port_speed_max_*`). The AS4610-54T uses the
+   **4×10G + 2×HiGig-21G** layout — live box reports the QSFPs at 20G (code 21).
+   That fills the chip exactly: 48×1G + 4×10G + 2×20G = **128 G = full fabric**.
+   The only 40G-class configs (450/490/491/495/500) are **pure-uplink layouts
+   (~3×42G ports, no 48×1G+4×10G)** — they don't fit this board, and 2×42G on top
+   of the 4610's port set = 172 G ≫ 128 G fabric. So 40G is not a selectable mode
+   on this board.
+2. **It's HiGig, not Ethernet.** Even the chip's top speeds are coded **21/42 =
+   HiGig2 20G/40G** (Broadcom proprietary stacking framing) — **never `40000`
+   (IEEE 40GBASE-R)**. HiGig has a proprietary header and does **not**
+   interoperate with a standard 40G device. (Stock ICOS actually runs these as
+   20G **Ethernet/XGMII** with `pbmp_gport_stack=0`, but 20G is itself a
+   non-standard rate — no standard device speaks 20G either.)
+
+**Bottom line:** these cages are hard-capped at **20G** by the board's chip
+config and are stacking-class — they will **not** run 40G and will **not**
+interoperate with a standard 40G device. (A QSFP could be configured as a single
+**10G** lane (standard 10GBASE-R) via a QSFP→SFP+ breakout to talk to a 10G
+device — that's the only standard-Ethernet interop these cages offer.)
+
+> Cabling consequence: a QSFP+ **DAC** (all 4 pairs) is fully used at 20G (4×5G)
+> for stacking. A 40G **SR4/LR4 optic** won't work — not for lack of lanes (all 4
+> are wired) but because the port is 20G/HiGig-class, not 40GBASE-R.
+
+### USEFUL reconfiguration — turn each QSFP cage into standard 10G port(s)
+
+What the cages *can* do for us (in our own NOS): be re-flexported into standard
+**single-lane 10GBASE-R / SFI** ports.
+
+- **Proof it works:** the 4 native SFP+ ports (xe0–3) are already exactly this —
+  Warpcore block 13 split into 4 independent 1-lane 10G ports. Blocks 14/15 (the
+  QSFP cages) are identical 4-lane Warpcores → same split applies. BMD allows it
+  (`speed_max`=21G ≥ 10000, `bmdPortMode10000fd`).
+- **Fits the fabric:** 48×1G + 4×10G + 2×10G = **108 G** (< 128 G; frees 20 G vs
+  the stock 2×20G).
+- **Interoperable:** real 10GBASE-R, links with any standard 10G device (unlike
+  the 20G/HiGig stock mode).
+- **★ Sidesteps the BCM84758.** The QSFP cages wire **straight to the internal
+  Warpcore — no external PHY** (xe4/xe5 = `WC-B1`; only xe0–3 go through the
+  proprietary-firmware 84758). So 10G off the QSFP cages = direct Warpcore SFI,
+  ucode already in our binary, **no 84758 driver/firmware dependency.**
+- **More than 2 possible** via QSFP→SFP+ breakout (4 lanes/cage): line-rate
+  sweet spot is 2 ports/cage (48+40+40 = 128 G exactly); all 8 (168 G)
+  oversubscribes.
+- **Effort:** a flexport / port-config (p2l/p2m/speed_max + TDM) change, not a
+  live speed toggle. Templated by the 14 stock config maps (e.g. cfg 497 = 12×10G)
+  in `OpenMDK/.../bcm56340_a0_bmd_attach.c`. Real work, but no architectural
+  blocker.
+
 ## Status
 
 - 1G copper: ✅ covered. QSFP SerDes: ✅ present (tuning TBD).
@@ -144,5 +223,48 @@ these files; they come from 6.5.7 — minor port). With OpenMDK (different phy
 framework) it'd need more adaptation, so this nudges the datapath toward OpenBCM.
 Still requires a 10G module + on-hardware test to confirm link/training.
 
-License note: Broadcom source-available (same class as OpenMDK/OpenBCM) — fine to
-use/build on our own hardware; kept local, not committed (see LICENSING.md).
+License note — TWO REVISIONS, read both:
+
+- **First take (from the mirror):** the sysdevguru mirror's files read `(c) 2016
+  Broadcom. Broadcom Proprietary and Confidential. All rights reserved.` with **no
+  LICENSE file** → looked proprietary / non-redistributable.
+- **CORRECTED 2026-06-05 (the decisive finding):** the **same files are published
+  by Broadcom's OWN official GitHub org** —
+  `Broadcom/Broadcom-Compute-Connectivity-Software-robo2-xsdk` — under a
+  `Legal/LICENSE` that **grants** "worldwide, non-exclusive, royalty-free,
+  perpetual… use, reproduce… distribute… and create derivative works and
+  distribute such source code" — **word-for-word the OpenMDK/OpenBCM grant.** The
+  official file header even points at that LICENSE. So this code **IS
+  source-available and redistributable**, subject to the same conditions as
+  OpenBCM (preserve notices, GPL-incompatible → keep kernel split, export
+  control). We re-sourced from the official repo to
+  `nos/datapath/phy84758-src/broadcom-official/` (with `LICENSE` + `PROVENANCE.md`).
+  The "carve from our own ICOS" route is now only an internal cross-check, not the
+  basis for use/distribution.
+
+## ✅✅ VERIFIED 2026-06-05 — carved from our own ICOS, byte-for-byte identical to the mirror
+
+Settled the license question by extracting the firmware from **our own** ICOS
+`switchdrvr` (the copy that shipped on the box, under Edgecore's license to us as
+the hardware owner) and comparing it to the mirror's `phy84758_ucode.c`:
+
+- Parsed the C array → 32768-byte raw blob (`phy84758_ucode_bin_len /* 32768 */`).
+- Found it **contiguously, in the clear** in `switchdrvr` at offset **`0x34de1bc`**
+  (pure content match — no disassembly needed; the trailer is `00 08 41 64 01 28
+  7d 7c` = 84740-family chip-ID + version 0128 + cksum, which is why the earlier
+  84756-trailer `00 08 47 5x` search missed it).
+- **SHA256 identical, 0 byte diffs:**
+  `64ae5619b3625982141250299c573e734663133547c18f0bf29317ea0112f9cf`
+
+Implications:
+1. The public mirror is **genuine** — exact same firmware Edgecore ships (v0128).
+2. We hold a **legitimately-licensed copy from our own device**; for running on
+   this box we don't depend on the third-party mirror at all.
+3. The "carve" (Plan A) is **trivial**, not the Ghidra RE feared in
+   `SWITCHDRVR_ANALYSIS.md` — the blob is stored plainly in `.rodata`.
+
+Blobs saved (git-ignored): `backup/icos-extract/phy84758_ucode_carved.bin`
+(from ICOS) and `…_from_mirror.bin` (from the C source). For a publishable NOS,
+ship the open driver and have the user supply the blob from their own device at
+install (the `request_firmware()` separation), since the blob itself is not
+redistributable.

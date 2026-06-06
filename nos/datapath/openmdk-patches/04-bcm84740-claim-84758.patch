@@ -1,0 +1,66 @@
+diff --git a/phy/PKG/chip/bcm84740/bcm84740_drv.c b/phy/PKG/chip/bcm84740/bcm84740_drv.c
+index 66f2769..9407544 100644
+--- a/phy/PKG/chip/bcm84740/bcm84740_drv.c
++++ b/phy/PKG/chip/bcm84740/bcm84740_drv.c
+@@ -14,6 +14,9 @@
+ 
+ extern unsigned char bcm84740_ucode[];
+ extern unsigned int bcm84740_ucode_len;
++/* EdgeNOS-4610: BCM84758 (84740-family) SFP+ PHY firmware (see bcm84758_ucode.c) */
++extern unsigned char bcm84758_ucode[];
++extern unsigned int bcm84758_ucode_len;
+ 
+ #define PHY_RESET_POLL_MAX              10
+ #define PHY_ROM_LOAD_POLL_MAX           500
+@@ -25,6 +28,13 @@ extern unsigned int bcm84740_ucode_len;
+ #define BCM84740_PMA_PMD_ID1            0x5fd0
+ #define BCM84740_CHIP_ID                0x84740
+ 
++/* EdgeNOS-4610: BCM84758 (84740-family) — AS4610-54T 10G SFP+ PHY (xe0-3).
++ * Live PMA-PMD ID = 0x600d:0x86f0 (vs 84740 0x0362:0x5fd0). Same driver flow,
++ * different firmware (bcm84758_ucode). */
++#define BCM84758_PMA_PMD_ID0            0x600d
++#define BCM84758_PMA_PMD_ID1            0x86f0
++#define BCM84758_CHIP_ID                0x84758
++
+ /* Default SPI ROM checksum */
+ #ifndef BCM84740_SPI_ROM_CHKSUM
+ #define BCM84740_SPI_ROM_CHKSUM         0x600d
+@@ -764,8 +774,20 @@ _bcm84740_init_stage_3(phy_ctrl_t *pc)
+     _PHY_DBG(pc, ("init_stage_3\n"));
+ 
+     if (PHY_CTRL_FLAGS(pc) & PHY_F_FW_MDIO_LOAD) {
+-        rv = _bcm84740_mdio_firmware_download(pc, bcm84740_ucode,
+-                                              bcm84740_ucode_len);
++        /* EdgeNOS-4610: pick the firmware matching the actual part. The 84758
++         * (AS4610 SFP+) and 84740 share this driver flow but need their own
++         * ucode. Re-read the PMA-PMD ID to select. */
++        uint32_t phyid0 = 0, phyid1 = 0;
++        PHY_BUS_READ(pc, PMA_PMD_ID0_REG, &phyid0);
++        PHY_BUS_READ(pc, PMA_PMD_ID1_REG, &phyid1);
++        if ((phyid0 == BCM84758_PMA_PMD_ID0) &&
++            ((phyid1 & ~0xf) == (BCM84758_PMA_PMD_ID1 & ~0xf))) {
++            rv = _bcm84740_mdio_firmware_download(pc, bcm84758_ucode,
++                                                  bcm84758_ucode_len);
++        } else {
++            rv = _bcm84740_mdio_firmware_download(pc, bcm84740_ucode,
++                                                  bcm84740_ucode_len);
++        }
+         /* Disable broadcast mode */
+         rv = _bcm84740_broadcast_set(pc, 0);
+     }
+@@ -900,8 +922,12 @@ bcm84740_phy_probe(phy_ctrl_t *pc)
+         return CDK_E_IO;
+     }
+ 
+-    if ((phyid0 == BCM84740_PMA_PMD_ID0) &&
+-        ((phyid1 & ~0xf) == (BCM84740_PMA_PMD_ID1 & ~0xf))) {
++    /* EdgeNOS-4610: claim both the 84740 and the 84740-family 84758 (AS4610
++     * SFP+). Same driver flow; firmware is chosen per-part at download time. */
++    if (((phyid0 == BCM84740_PMA_PMD_ID0) &&
++         ((phyid1 & ~0xf) == (BCM84740_PMA_PMD_ID1 & ~0xf))) ||
++        ((phyid0 == BCM84758_PMA_PMD_ID0) &&
++         ((phyid1 & ~0xf) == (BCM84758_PMA_PMD_ID1 & ~0xf)))) {
+ #if PHY_CONFIG_EXTERNAL_BOOT_ROM == 0
+         /* Use MDIO download if external ROM is disabled */
+         PHY_CTRL_FLAGS(pc) |= PHY_F_FW_MDIO_LOAD;

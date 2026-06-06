@@ -1,0 +1,13 @@
+diff --git a/bmd/PKG/chip/bcm56340_a0/bcm56340_a0_bmd_attach.c b/bmd/PKG/chip/bcm56340_a0/bcm56340_a0_bmd_attach.c
+index 6daa740..662c6af 100644
+--- a/bmd/PKG/chip/bcm56340_a0/bcm56340_a0_bmd_attach.c
++++ b/bmd/PKG/chip/bcm56340_a0/bcm56340_a0_bmd_attach.c
+@@ -123,7 +123,7 @@ static const int port_speed_max_400[] = {
+      1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+      1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+      1, -1, -1, -1,
+-     3,  3,  3,  3,
++    10, 10, 10, 10,   /* EdgeNOS-4610: SFP+ xe0-3 (was 3/2.5G) -> 10G */
+     10, 10, -1, -1,
+     21, -1, 21, -1,
+     -1, -1, -1, -1,

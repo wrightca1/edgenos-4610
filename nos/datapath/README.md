@@ -2,7 +2,15 @@
 
 ONL gives us a booting Linux + platform management (sensors/optics/LED/fan), but
 **not** packet forwarding. The data plane is a separate component that drives the
-BCM56340 silicon through the Broadcom SDK. This directory will hold that agent.
+BCM56340 silicon through the Broadcom SDK.
+
+> **That agent now exists and runs on the live switch: [`mdk-app/edged.c`](mdk-app/edged.c).**
+> It attaches the BCM56340 over the on-die CMIC (`/dev/mem`), brings the chip up,
+> binds the front-panel PHYs, and forwards L2. **48× 1G copper links, L2
+> forwards (55/55), and the 4× 10G SFP+ ports are configured at 10G** with the
+> BCM84758 ucode loaded and lasers on. Full state and what's left (the SFP+
+> optical PCS lock) is in **[`DATAPATH_STATUS.md`](DATAPATH_STATUS.md)**; the
+> OpenMDK changes this board needs are in [`openmdk-patches/`](openmdk-patches/).
 
 ## What's needed
 
@@ -43,6 +51,25 @@ BCM56340 silicon through the Broadcom SDK. This directory will hold that agent.
 - `LICENSING.md` — keep the proprietary SDK in userspace; GPLv2 BDE in-kernel.
 
 ## Status
+
+**`edged` is live on the box and forwarding (2026-06-06).** The diag-shell phase
+below (`linux-user-mdk`) graduated into the real daemon, **[`mdk-app/edged.c`](mdk-app/edged.c)**.
+Full detail in **[`DATAPATH_STATUS.md`](DATAPATH_STATUS.md)**; in short:
+
+- ✅ Chip reset/init/swinit over `/dev/mem` (no kernel module) — Path A.
+- ✅ **48× 1G copper (BCM54282)** — external-PHY reset deassert (CPLD) + CMIC MIIM
+  bus map + corrected port→MDIO map + post-init re-probe → a jack-to-jack cable
+  **links at 1G**.
+- ✅ **L2 forwarding** — VLAN 1, STP forwarding on 55/55 ports.
+- ✅ **4× 10G SFP+ (BCM84758)** — PHYs bound, ucode loaded
+  (`fw-checksum 1.0xca1c=0x600d`), **ports configured at 10G** (`inventory 4×10G`),
+  optical **lasers on** (`module_rx_los_all 0x00`, light flowing).
+- ⏳ **SFP+ optical link (PCS lock)** — the Warpcore 10G SerDes / 84758 media-RX
+  layer; not yet locked. The only remaining datapath gap on the front panel.
+
+Needs the OpenMDK changes in [`openmdk-patches/`](openmdk-patches/) +
+`-DPHY_CONFIG_INCLUDE_BCM84740=1 -DPHY_CONFIG_INCLUDE_BCM54282=1` (already in
+`build-datapath.sh`).
 
 **Verified against the live stock NOS (2026-06-05):** see
 [`VERIFICATION.md`](VERIFICATION.md) — the running ICOS box confirmed our access

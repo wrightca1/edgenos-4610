@@ -81,3 +81,39 @@ canonical file:
 > Note the asymmetry: the SerDes firmware "blob" problem common to open switches
 > is *milder* here — OpenMDK ships the Warpcore microcode as **source** under the
 > same redistributable license, not as an opaque binary.
+
+---
+
+## BCM84758 PHY driver + firmware (10G SFP+) — source-available after all
+
+This is the one piece our open stack originally lacked (the 10G SFP+ PHY on
+xe0–3; see [`live-investigation/PHY_SIGNAL_PATH.md`](live-investigation/PHY_SIGNAL_PATH.md)).
+We first obtained it from an unofficial mirror whose `All rights reserved` header
+(no LICENSE file) made it look proprietary — but that was a sourcing artifact.
+
+**Corrected finding (2026-06-05):** the identical driver + firmware are published
+by **Broadcom's own official GitHub org**,
+`Broadcom/Broadcom-Compute-Connectivity-Software-robo2-xsdk`, under a
+`Legal/LICENSE` whose grant is **word-for-word the OpenMDK/OpenBCM grant**
+(worldwide, non-exclusive, royalty-free, perpetual — use/reproduce/distribute +
+derivatives for source). So it sits in the **same tier as the rest of our stack**.
+
+| Item | License | Redistribute? |
+|---|---|---|
+| `phy84740.c`, `phy84758_ucode.c`, `phy84740_ucode.c` — re-sourced to `nos/datapath/phy84758-src/broadcom-official/` (+ `LICENSE`, `PROVENANCE.md`) | Broadcom source-available, **same grant as OpenMDK/OpenBCM** | ✅ Yes, under the grant's conditions |
+
+Conditions (same as the rest of the SDK): **preserve the proprietary notices**
+(keep the header + ship the LICENSE), **GPL-incompatible** so keep the
+userspace/kernel split, comply with **export control**, no warranty.
+
+- **Use the official copy, not the mirror.** The official header points at the
+  granting LICENSE; the mirror's bare "All rights reserved" header does not.
+- **Verified byte-identical (SHA256 `64ae5619…0112f9cf`, v0128, 32768 B)** across:
+  Broadcom official repo, the mirror, **and** the blob carved from our own ICOS
+  `switchdrvr` (offset `0x34de1bc`). The carve is internal verification only — we
+  do **not** rely on reverse-engineering object code, which the LICENSE forbids;
+  we use the source Broadcom itself distributes.
+- **Publishable-NOS note:** while the grant *permits* redistributing the source,
+  the cleanest packaging is still the Linux `request_firmware()` split (ship the
+  driver; load the blob at runtime) — but that's a hygiene choice now, not a legal
+  requirement.

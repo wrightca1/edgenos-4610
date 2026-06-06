@@ -1,0 +1,1247 @@
+/*
+ * edged.c — EdgeNOS-4610 switch data-plane daemon.
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (c) 2026 EdgeNOS project.
+ *
+ * This is OUR code (open source, BSD-3-Clause). It links the Broadcom OpenMDK
+ * CDK/BMD/PHY libraries (source-available; see ../../../LICENSING.md). A
+ * permissive license is used deliberately so edged can lawfully link the
+ * GPL-incompatible OpenMDK SDK.
+ *
+ * edged brings the BCM56340 (Helix4) data plane up on the AS4610-54T by driving
+ * the OpenMDK BMD over the on-die CMIC, mapped via /dev/mem at phys 0x48000000
+ * (no Broadcom kernel module; STRICT_DEVMEM is off in the ONL kernel).
+ *
+ * Bring-up order (proven on hardware 2026-06-05):
+ *     attach -> bmd_reset -> bmd_init -> bmd_switching_init
+ * bmd_reset MUST precede bmd_init: reset sets up TOP_CORE_PLL + core clocks;
+ * init then talks to the core over SCHAN. Skipping reset => "S-channel error /
+ * IPIPE reset timeout".
+ *
+ * Stages: attach -> reset -> init -> swinit -> port config (native speed) ->
+ * L2 STP-forwarding -> port inventory. With --keep, a control loop monitors
+ * link state and re-syncs the MAC on link changes (bmd_port_mode_update).
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <inttypes.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <fcntl.h>
+#include <time.h>
+#include <errno.h>
+#include <linux/i2c-dev.h>
+
+/* The SMBus union + protocol constants live in <linux/i2c.h> on modern
+ * sysroots (split out of <linux/i2c-dev.h>). Pull it in if available; define
+ * the few bits we need as a fallback so the CPLD path builds on any toolchain. */
+#if defined(__has_include)
+#  if __has_include(<linux/i2c.h>)
+#    include <linux/i2c.h>
+#  endif
+#endif
+#ifndef I2C_SMBUS_BYTE_DATA
+/* <linux/i2c.h> absent on this toolchain: define the SMBus byte-data ABI
+ * ourselves (the I2C_SMBUS ioctl number + i2c_smbus_ioctl_data struct still
+ * come from <linux/i2c-dev.h>, which is always present). */
+#define I2C_SMBUS_WRITE     0
+#define I2C_SMBUS_READ      1
+#define I2C_SMBUS_BYTE_DATA 2
+union i2c_smbus_data {
+    unsigned char  byte;
+    unsigned short word;
+    unsigned char  block[34];
+};
+#endif
+
+#include <cdk_config.h>
+#include <cdk/cdk_device.h>
+#include <cdk/cdk_chip.h>
+#include <cdk/arch/xgsm_miim.h>
+
+#include <bmd_config.h>
+#include <bmd/bmd.h>
+#include <bmd/bmd_phy.h>
+#include <bmd/bmd_phy_ctrl.h>
+
+#include <phy_config.h>
+#include <phy/phy.h>
+#include <phy/phy_drvlist.h>
+
+#include "linux_shbde.h"
+
+/* AS4610-54T default: BCM56340 (Helix4) CMIC at on-die phys 0x48000000. */
+#define EDGED_DEFAULT_UNIT  "0x14e4:0xb340:0x01@0x48000000"
+#define CMIC_WINDOW_BYTES   (256 * 1024)
+#define MAX_FRONT_PORTS     128
+#define LINK_POLL_SEC       5
+
+#define LOG(fmt, ...)  fprintf(stderr, "edged: " fmt "\n", ##__VA_ARGS__)
+
+#if !defined(SYS_BE_PIO) || !defined(SYS_BE_PACKET) || !defined(SYS_BE_OTHER)
+#error "bus endian flags SYS_BE_PIO/PACKET/OTHER not defined (pass -DSYS_BE_*=0 for armhf)"
+#endif
+
+static int front_ports[MAX_FRONT_PORTS];
+static int n_front;
+static int link_state[MAX_FRONT_PORTS];   /* indexed by front_ports[] slot */
+
+/* SFP+ logical ports (cfg 400: the BCM84758 binds at logical 53-56). */
+#define SFP_LO 53
+#define SFP_HI 56
+
+/* Per-port dynamic config (CDK DYN_CONFIG): a small set of speed classes that the
+ * SFP+ override hangs off. bcm56340_a0_port_speed_max() consults this (via
+ * cdk_dev_port_speed_max_get) whenever num_port_configs != 0, BEFORE the static
+ * cfg-400 table — so installing it lets us report 10G for the SFP+ ports and have
+ * bmd_port_mode_set accept a forced 10G mode (driving the Warpcore SerDes + 84758
+ * to 10G). port_config_id is a char, so we dedup speeds into <=16 classes. */
+static cdk_port_config_t edged_pcfg[16];
+static int edged_npcfg;
+
+static int
+edged_pcfg_id(uint32_t speed_max)
+{
+    int i;
+    for (i = 0; i < edged_npcfg; i++) {
+        if (edged_pcfg[i].speed_max == speed_max) {
+            return i;
+        }
+    }
+    if (edged_npcfg < (int)(sizeof(edged_pcfg) / sizeof(edged_pcfg[0]))) {
+        edged_pcfg[edged_npcfg].speed_max  = speed_max;
+        edged_pcfg[edged_npcfg].port_flags = 0;
+        edged_pcfg[edged_npcfg].port_mode  = CDK_DCFG_PORT_MODE_IEEE;
+        edged_pcfg[edged_npcfg].sys_port   = 0;
+        edged_pcfg[edged_npcfg].app_port   = 0;
+        return edged_npcfg++;
+    }
+    return 0;
+}
+
+/* BMD/PHY sleep hook (referenced via -DBMD_SYS_USLEEP=_usleep). */
+int
+_usleep(uint32_t usecs)
+{
+    return usleep(usecs);
+}
+
+/* mmap a physical region of /dev/mem into our address space. */
+static uint32_t *
+_mmap(off_t p, int size)
+{
+    static int memfd = -1;
+    uint32_t *va;
+
+    if (memfd == -1) {
+        if ((memfd = open("/dev/mem", O_RDWR | O_SYNC | O_DSYNC | O_RSYNC)) < 0) {
+            perror("edged: open /dev/mem");
+            return NULL;
+        }
+    }
+    va = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, memfd, p);
+    if (va == NULL || va == MAP_FAILED) {
+        fprintf(stderr, "edged: mmap phys 0x%x failed: ", (unsigned int)p);
+        perror("");
+        return NULL;
+    }
+    return va;
+}
+
+/* AS4610 is little-endian ARM: no PIO/packet/other byte-swap. */
+static uint32_t
+_bus_flags(void)
+{
+    uint32_t flags = CDK_DEV_MBUS_PCI;
+#if SYS_BE_PIO == 1
+    flags |= CDK_DEV_BE_PIO;
+#endif
+#if SYS_BE_PACKET == 1
+    flags |= CDK_DEV_BE_PACKET;
+#endif
+#if SYS_BE_OTHER == 1
+    flags |= CDK_DEV_BE_OTHER;
+#endif
+    return flags;
+}
+
+/* Create a CDK device context for the CMIC mapped at base_addr. */
+static int
+_create_cdk_device(uint32_t vendor_id, uint32_t device_id, uint32_t rev_id,
+                   uint32_t base_addr)
+{
+    cdk_dev_id_t id;
+    cdk_dev_vectors_t dv;
+    int rc;
+
+    memset(&id, 0, sizeof(id));
+    id.vendor_id = vendor_id;
+    id.device_id = device_id;
+    id.revision  = rev_id;
+
+    memset(&dv, 0, sizeof(dv));
+    dv.base_addr = _mmap(base_addr, CMIC_WINDOW_BYTES);
+    if (dv.base_addr == NULL) {
+        return -1;
+    }
+
+    rc = cdk_dev_create(&id, &dv, _bus_flags());
+    if (rc < 0) {
+        LOG("cdk_dev_create failed for 0x%x:0x%x:0x%x @ 0x%x: %s (%d)",
+            vendor_id, device_id, rev_id, base_addr, CDK_ERRMSG(rc), rc);
+    }
+    return rc;
+}
+
+/* Map a resolved port mode to a coarse speed label for the inventory. */
+static const char *
+mode_str(bmd_port_mode_t m)
+{
+    switch (m) {
+    case bmdPortModeAuto:       return "auto";
+    case bmdPortModeDisabled:   return "disabled";
+    case bmdPortMode10fd: case bmdPortMode10hd:      return "10M";
+    case bmdPortMode100fd: case bmdPortMode100hd: case bmdPortMode100FX: return "100M";
+    case bmdPortMode1000fd: case bmdPortMode1000hd:
+    case bmdPortMode1000X: case bmdPortMode1000KX:   return "1G";
+    case bmdPortMode2500fd:     return "2.5G";
+    case bmdPortMode5000fd:     return "5G";
+    case bmdPortMode10000fd: case bmdPortMode10000SFI: case bmdPortMode10000XFI:
+    case bmdPortMode10000CR: case bmdPortMode10000KR: case bmdPortMode10000KX:
+                                return "10G";
+    case bmdPortMode20000fd: case bmdPortMode20000KR: case bmdPortMode21000fd:
+                                return "20G";
+    case bmdPortMode40000fd: case bmdPortMode40000CR: case bmdPortMode40000KR:
+    case bmdPortMode42000fd:    return "40G";
+    default:                    return "?";
+    }
+}
+
+/* ---- iProc CCB MDIO master (the EXTERNAL PHYs live here, NOT on the CMIC
+ *      SBUS MIIM): BCM84758 10G SFP+ and BCM54282 1G. From the ONL DTS +
+ *      Linux mdio-xgs-iproc-cc driver: brcm,iproc-ccb-mdio @ 0x18032000,
+ *      enable bit at 0x1803fc3c bit 4. ---- */
+#define IPROC_MDIO_MGMT_BASE  0x18032000   /* MGMT_CTL@+0, MGMT_CMD_DATA@+4 */
+#define IPROC_MDIO_EN_BASE    0x1803f000   /* page holding the enable reg */
+#define IPROC_MDIO_EN_OFF     0xc3c        /* enable reg = 0x1803fc3c */
+#define IPROC_MDIO_EN_BIT     4            /* DT iproc-mdio-sel-bit */
+#define MC_PRE   (1u << 7)                 /* MGMT_CTL preamble */
+#define MC_BSY   (1u << 8)                 /* MGMT_CTL busy */
+#define MC_EXT   (1u << 9)                 /* MGMT_CTL external-bus select */
+#define CD_SB(x)   ((uint32_t)(x) << 30)
+#define CD_OP(x)   ((uint32_t)(x) << 28)
+#define CD_PA(x)   ((uint32_t)(x) << 23)
+#define CD_RA(x)   ((uint32_t)(x) << 18)
+#define CD_TA(x)   ((uint32_t)(x) << 16)
+#define CD_DATA(x) ((uint32_t)(x) & 0xffff)
+
+static volatile uint32_t *iproc_mgmt;   /* [0]=MGMT_CTL [1]=MGMT_CMD_DATA */
+static volatile uint32_t *iproc_enpg;
+static int g_iproc_ext = 1;             /* MGMT_CTL EXT bit (1=external bus) */
+
+static void
+iproc_set_ext(void)
+{
+    if (g_iproc_ext) {
+        iproc_mgmt[0] |= MC_EXT;
+    } else {
+        iproc_mgmt[0] &= ~MC_EXT;
+    }
+}
+
+static int
+iproc_mdio_init(void)
+{
+    uint32_t ctl, div;
+    iproc_mgmt = (volatile uint32_t *)_mmap(IPROC_MDIO_MGMT_BASE, 4096);
+    iproc_enpg = (volatile uint32_t *)_mmap(IPROC_MDIO_EN_BASE, 4096);
+    if (iproc_mgmt == NULL || iproc_enpg == NULL) {
+        return -1;
+    }
+    /* Enable the external MDIO master (set the sel bit). */
+    iproc_enpg[IPROC_MDIO_EN_OFF / 4] |= (1u << IPROC_MDIO_EN_BIT);
+    /* MGMT_CTL: keep existing MDC divider if set, else a conservative value;
+     * preamble on. EXT is set per transaction. */
+    ctl = iproc_mgmt[0];
+    div = ctl & 0x7f;
+    if (div == 0) {
+        div = 0x32;
+    }
+    iproc_mgmt[0] = MC_PRE | div;
+    return 0;
+}
+
+static int
+iproc_mdio_wait(void)
+{
+    int us = 0;
+    while (iproc_mgmt[0] & MC_BSY) {
+        if (us > 500) {
+            return -1;
+        }
+        usleep(10);
+        us += 10;
+    }
+    return 0;
+}
+
+/* Clause-45 read over the iProc CCB MDIO (external bus). sb/read_op let us probe
+ * the exact framing the controller wants. Returns -1 on error, else 16-bit val. */
+static int
+iproc_mdio_c45_read_ex(int phy, int devad, uint16_t reg, uint32_t sb, uint32_t read_op)
+{
+    if (iproc_mdio_wait() < 0) {
+        return -1;
+    }
+    iproc_set_ext();
+    /* address frame: OP=0 (set C45 address), TA=2 */
+    iproc_mgmt[1] = CD_SB(sb) | CD_OP(0) | CD_PA(phy) | CD_RA(devad) |
+                    CD_TA(2) | CD_DATA(reg);
+    if (iproc_mdio_wait() < 0) {
+        return -1;
+    }
+    /* read frame: OP=read_op, TA=2 */
+    iproc_mgmt[1] = CD_SB(sb) | CD_OP(read_op) | CD_PA(phy) | CD_RA(devad) | CD_TA(2);
+    if (iproc_mdio_wait() < 0) {
+        return -1;
+    }
+    return (int)(iproc_mgmt[1] & 0xffff);
+}
+
+static int
+iproc_mdio_c45_read(int phy, int devad, uint16_t reg)
+{
+    return iproc_mdio_c45_read_ex(phy, devad, reg, 0, 3);
+}
+
+/* Clause-22 read over the iProc CCB MDIO (external bus): SB=1, OP=2 (read). */
+static int
+iproc_mdio_c22_read(int phy, int reg)
+{
+    if (iproc_mdio_wait() < 0) {
+        return -1;
+    }
+    iproc_set_ext();
+    iproc_mgmt[1] = CD_SB(1) | CD_OP(2) | CD_PA(phy) | CD_RA(reg) | CD_TA(2);
+    if (iproc_mdio_wait() < 0) {
+        return -1;
+    }
+    return (int)(iproc_mgmt[1] & 0xffff);
+}
+
+/* Scan the iProc external MDIO for PHYs (the 84758 is C45; 54282 is C22). */
+static void
+scan_iproc_mdio(void)
+{
+    int phy, id0, id1;
+
+    if (iproc_mdio_init() < 0) {
+        LOG("iProc MDIO: mmap failed (need root)");
+        return;
+    }
+    LOG("iProc CCB MDIO @ 0x18032000: MGMT_CTL=0x%08x  enable[0x..fc3c]=0x%08x",
+        iproc_mgmt[0], iproc_enpg[IPROC_MDIO_EN_OFF / 4]);
+
+    LOG("iProc ext scan — C45 (devad1 reg2/3) for 84758:");
+    for (phy = 0; phy < 32; phy++) {
+        id0 = iproc_mdio_c45_read(phy, 1, 0x0002);
+        id1 = iproc_mdio_c45_read(phy, 1, 0x0003);
+        if (id0 < 0 || id1 < 0) continue;
+        if ((id0 == 0 || id0 == 0xffff) && (id1 == 0 || id1 == 0xffff)) continue;
+        LOG("  C45 phy 0x%02x: ID %04x:%04x%s", phy, id0, id1,
+            (id0 == 0x600d && (id1 & ~0xf) == 0x86f0) ? "  <== BCM84758" : "");
+    }
+    LOG("iProc ext scan — C22 (reg2/3) for 54282 (sanity that the bus works):");
+    for (phy = 0; phy < 32; phy++) {
+        id0 = iproc_mdio_c22_read(phy, 0x02);
+        id1 = iproc_mdio_c22_read(phy, 0x03);
+        if (id0 < 0 || id1 < 0) continue;
+        if ((id0 == 0 || id0 == 0xffff) && (id1 == 0 || id1 == 0xffff)) continue;
+        LOG("  C22 phy 0x%02x: ID %04x:%04x%s", phy, id0, id1,
+            (id0 == 0x600d && (id1 & ~0xf) == 0x845b) ? "  <== BCM54282" : "");
+    }
+    /* Second pass on the INTERNAL selection (EXT=0): the front-panel 0x600d
+     * PHYs (54282 1G / 84758 10G) may hang off this segment of the master. */
+    g_iproc_ext = 0;
+    LOG("iProc INTERNAL (EXT=0) scan — C22 + C45, phy 0-31:");
+    for (phy = 0; phy < 32; phy++) {
+        id0 = iproc_mdio_c22_read(phy, 0x02);
+        id1 = iproc_mdio_c22_read(phy, 0x03);
+        if (!(id0 < 0 || id1 < 0) &&
+            !((id0 == 0 || id0 == 0xffff) && (id1 == 0 || id1 == 0xffff))) {
+            LOG("  int C22 phy 0x%02x: ID %04x:%04x%s", phy, id0, id1,
+                (id0 == 0x600d && (id1 & ~0xf) == 0x845b) ? "  <== BCM54282" : "");
+        }
+        id0 = iproc_mdio_c45_read(phy, 1, 0x0002);
+        id1 = iproc_mdio_c45_read(phy, 1, 0x0003);
+        if (!(id0 < 0 || id1 < 0) &&
+            !((id0 == 0 || id0 == 0xffff) && (id1 == 0 || id1 == 0xffff))) {
+            LOG("  int C45 phy 0x%02x: ID %04x:%04x%s", phy, id0, id1,
+                (id0 == 0x600d && (id1 & ~0xf) == 0x86f0) ? "  <== BCM84758" : "");
+        }
+    }
+    g_iproc_ext = 1;
+
+    /* Focused debug on the PHY we found (addr 1 = mgmt PHY): C22 register
+     * dump + C45 framing variants, raw (unfiltered) values. */
+    {
+        int r;
+        LOG("phy1 raw C22 regs 0-5:");
+        for (r = 0; r <= 5; r++) {
+            LOG("    c22 reg%d = 0x%04x", r, iproc_mdio_c22_read(1, r) & 0xffff);
+        }
+        LOG("phy1 C45 devad1 reg2 framings:");
+        LOG("    SB0/OP3 = 0x%04x", iproc_mdio_c45_read_ex(1, 1, 2, 0, 3) & 0xffff);
+        LOG("    SB0/OP2 = 0x%04x", iproc_mdio_c45_read_ex(1, 1, 2, 0, 2) & 0xffff);
+        LOG("    SB2/OP3 = 0x%04x", iproc_mdio_c45_read_ex(1, 1, 2, 2, 3) & 0xffff);
+        LOG("    devad1 reg3 SB0/OP3 = 0x%04x", iproc_mdio_c45_read_ex(1, 1, 3, 0, 3) & 0xffff);
+    }
+    LOG("iProc CCB MDIO scan done");
+}
+
+extern int cdk_xgsm_miim_read(int unit, uint32_t phy_addr, uint32_t reg, uint32_t *val);
+
+/* Replay ICOS's CMIC MIIM bus-map / select registers (RE'd by booting ICOS and
+ * dumping 0x48011000 while the external MDIO worked — see dumps/icos_mdio_regs.txt).
+ * Our bmd_init leaves these 0, so external MDIO is unreachable; ICOS sets them to
+ * route the external buses. This is the missing external-MDIO enable. */
+/* SMBus byte-data primitives (struct i2c_smbus_ioctl_data from <linux/i2c-dev.h>).
+ * We talk to the CPLD with SMBus write/read-byte-data — the SAME transaction type
+ * the ONL accton_as4610_cpld kernel driver uses — instead of a raw 2-byte write().
+ * The raw write() raced with the bound driver's periodic polling and silently
+ * dropped some registers (0x0d/0x19/0x1b in the prior run); SMBus + retry + a
+ * read-back verify makes the deassert deterministic from a clean boot. */
+static int
+cpld_smbus_xfer(int fd, int rw, uint8_t reg, union i2c_smbus_data *data)
+{
+    struct i2c_smbus_ioctl_data args;
+    args.read_write = (uint8_t)rw;
+    args.command    = reg;
+    args.size       = I2C_SMBUS_BYTE_DATA;
+    args.data       = data;
+    return ioctl(fd, I2C_SMBUS, &args);
+}
+
+static int
+cpld_read_fd(int fd, uint8_t reg)
+{
+    union i2c_smbus_data data;
+    if (cpld_smbus_xfer(fd, I2C_SMBUS_READ, reg, &data) < 0) return -1;
+    return data.byte & 0xff;
+}
+
+/* Write one CPLD (i2c0 @ 0x30) register, with retries and read-back verify.
+ * FORCE because the ONL accton_as4610_cpld driver is bound to the device. */
+static void
+cpld_write(int reg, int val)
+{
+    int fd = open("/dev/i2c-0", O_RDWR);
+    int tries;
+    if (fd < 0) { LOG("cpld: open /dev/i2c-0 failed: %s", strerror(errno)); return; }
+    if (ioctl(fd, I2C_SLAVE_FORCE, 0x30) < 0) {
+        LOG("cpld: I2C_SLAVE_FORCE 0x30 failed: %s", strerror(errno));
+        close(fd);
+        return;
+    }
+    for (tries = 0; tries < 8; tries++) {
+        union i2c_smbus_data data;
+        data.byte = (uint8_t)val;
+        if (cpld_smbus_xfer(fd, I2C_SMBUS_WRITE, (uint8_t)reg, &data) >= 0) {
+            int rb = cpld_read_fd(fd, (uint8_t)reg);
+            /* Accept if read-back matches, or if the reg is unreadable (-1):
+             * some CPLD regs are write-only/strobe; the write itself succeeded. */
+            if (rb < 0 || rb == (val & 0xff)) { close(fd); return; }
+        }
+        usleep(3000);   /* let the bound driver's poll finish, then retry */
+    }
+    LOG("cpld: write 0x%02x=0x%02x failed after retries (last errno: %s)",
+        reg, val, strerror(errno));
+    close(fd);
+}
+
+/* Deassert the external front-panel PHY reset (54282 1G + 84758 10G SFP+). ONL
+ * leaves CPLD 0x19=0x7f/0x1b=0xb5 (PHYs HELD IN RESET, power-on default); ICOS
+ * clears them. Without this the external MDIO is dead. */
+/* Read one CPLD register (own fd). Returns -1 on error. */
+static int
+cpld_read(int reg)
+{
+    int fd = open("/dev/i2c-0", O_RDWR);
+    int v;
+    if (fd < 0) return -1;
+    if (ioctl(fd, I2C_SLAVE_FORCE, 0x30) < 0) { close(fd); return -1; }
+    v = cpld_read_fd(fd, (uint8_t)reg);
+    close(fd);
+    return v;
+}
+
+static void
+deassert_ext_phy_reset(void)
+{
+    int r19, r1b;
+    cpld_write(0x07, 0x02); cpld_write(0x08, 0x02); cpld_write(0x0d, 0x01);
+    cpld_write(0x19, 0x00); cpld_write(0x1b, 0x00);
+    r19 = cpld_read(0x19); r1b = cpld_read(0x1b);
+    if (r19 == 0x00 && r1b == 0x00) {
+        LOG("ext-phy: deasserted CPLD reset (0x19=0x00 0x1b=0x00 verified)");
+    } else {
+        LOG("ext-phy: WARNING CPLD reset NOT cleared (0x19=0x%02x 0x1b=0x%02x) "
+            "— external PHYs may stay held in reset", r19, r1b);
+    }
+}
+
+static void
+write_icos_miim_map(void)
+{
+    static const struct { uint32_t off, val; } regs[] = {
+        { 0x004, 0x00010012 }, { 0x008, 0x30001000 }, { 0x010, 0x08210001 },
+        { 0x058, 0x00F00000 }, { 0x060, 0xFFFFFFFE }, { 0x064, 0x1101FFFF },
+        { 0x074, 0x09249000 }, { 0x078, 0x09249249 }, { 0x07c, 0x03249249 },
+        { 0x080, 0x00092480 }, { 0x084, 0x00000002 },
+        /* bus->address map (octal-PHY gaps; ICOS skips 0x09/0x0a etc.) */
+        { 0x094, 0x04030201 }, { 0x098, 0x08070605 }, { 0x09c, 0x0E0D0C0B },
+        { 0x0a0, 0x1211100F }, { 0x0a4, 0x18171615 }, { 0x0a8, 0x1C1B1A19 },
+        { 0x0ac, 0x04030201 }, { 0x0b0, 0x08070605 }, { 0x0b4, 0x0E0D0C0B },
+        { 0x0b8, 0x1211100F }, { 0x0bc, 0x18171615 },
+    };
+    volatile uint32_t *m = (volatile uint32_t *)_mmap(0x48011000, 0x1000);
+    unsigned k;
+    if (m == NULL) { LOG("ext-mdio: mmap 0x48011000 failed"); return; }
+    for (k = 0; k < sizeof(regs) / sizeof(regs[0]); k++) {
+        m[regs[k].off / 4] = regs[k].val;
+    }
+    LOG("ext-mdio: wrote %u ICOS CMIC MIIM bus-map regs @0x48011000", k);
+}
+
+/* CMIC MIIM scan using ICOS's CMIC_MIIM_PARAM encoding (RE'd from switchdrvr
+ * soc_miim_read @0x184683c). ICOS reaches the EXTERNAL front-panel PHYs (54282
+ * 1G / 84758 10G) over the CMIC MIIM, building PARAM from the phy_addr as:
+ *   bits[4:0]=device, bits[6:5]=bus, bit7->PARAM bit26 (int/clause sel).
+ * OpenMDK cdk_xgsm_miim does a flat phy_addr<<16, so to produce ICOS's PARAM we
+ * pass cdk_addr = device | (bus<<6) | (bit7<<10). (e.g. xe0 iaddr 0xc1 -> 0x481,
+ * ge0 iaddr 0x81 -> 0x401.) Sweep bus + device, C45, look for 0x600d PHYs. */
+static void
+scan_cmic_miim_icos(int unit)
+{
+    int hi, bus, dev;
+    uint32_t id0, id1;
+
+    uint32_t addr;
+    (void)hi; (void)bus; (void)dev;
+    LOG("CMIC MIIM C45 sweep (phy_addr 0x000-0x3ff, all bus/select bits):");
+    for (addr = 0; addr <= 0x3ff; addr++) {
+        id0 = id1 = 0;
+        /* cdk auto-adds the clause-45 select bit because devad is present. */
+        if (cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x02, &id0) < 0) {
+            continue;
+        }
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x03, &id1);
+        if ((id0 == 0 || id0 == 0xffff) && (id1 == 0 || id1 == 0xffff)) {
+            continue;
+        }
+        LOG("  phy_addr 0x%03x: C45 ID %04x:%04x%s", addr, id0, id1,
+            (id0 == 0x600d && (id1 & ~0xf) == 0x86f0) ? "  <== BCM84758" :
+            (id0 == 0x600d && (id1 & ~0xf) == 0x845b) ? "  <== BCM54282" :
+            (id0 == 0x143) ? "  (warpcore)" : "");
+    }
+    LOG("CMIC MIIM C45 sweep done");
+}
+
+/* MDIO scan: walk external + internal MIIM buses, read PMA-PMD ID (devad 1,
+ * regs 2/3), and report any responding PHY — used to locate the BCM84758
+ * (0x600d:0x86f0) so we can fix the port->MDIO-address map. */
+static void
+scan_mdio(int unit)
+{
+    int kind, b, a;
+    uint32_t id0, id1, base;
+    const char *name;
+
+    LOG("MDIO scan: PMA-PMD ID (devad1 reg2/3) over EBUS0-3 + IBUS0-3, addr 0-15");
+    LOG("looking for BCM84758 = 0x600d:0x86f0 ...");
+    for (kind = 0; kind < 2; kind++) {
+        name = kind ? "IBUS" : "EBUS";
+        for (b = 0; b <= 3; b++) {
+            base = kind ? CDK_XGSM_MIIM_IBUS(b) : CDK_XGSM_MIIM_EBUS(b);
+            for (a = 0; a < 16; a++) {
+                uint32_t addr = base | a;
+                id0 = id1 = 0;
+                if (cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x02, &id0) < 0) {
+                    continue;
+                }
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x03, &id1);
+                if ((id0 == 0 || id0 == 0xffff) &&
+                    (id1 == 0 || id1 == 0xffff)) {
+                    continue;  /* nothing there */
+                }
+                LOG("  %s%d addr 0x%02x (miim 0x%03x): ID %04x:%04x%s",
+                    name, b, a, addr, id0, id1,
+                    (id0 == 0x600d && (id1 & ~0xf) == 0x86f0)
+                        ? "   <==== BCM84758" : "");
+            }
+        }
+    }
+    LOG("CMIC MIIM scan done");
+
+    /* Replay ICOS's CMIC MIIM bus-map/select regs to enable external MDIO,
+     * then scan the front-panel PHYs over the CMIC MIIM. */
+    write_icos_miim_map();
+    scan_cmic_miim_icos(unit);
+
+    /* The mgmt-port PHY hangs off the iProc CCB MDIO master. Scan that too. */
+    scan_iproc_mdio();
+
+    LOG("MDIO scan done");
+}
+
+/* Per-front-port (ge0..47) external 54282 MDIO address, taken VERBATIM from the
+ * live board's config.bcm.as4610-54t (port_phy_addr_geN). The octal 54282s leave
+ * a 2-address gap between packages (and a 4-wide gap at the 24-port bank seam),
+ * so this is NOT a simple formula — it's a lookup. Front-panel jack = geN+1. */
+static const uint8_t ge_phy_addr[48] = {
+    0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,  /* ge0-7   -> jacks 1-8   */
+    0x0b,0x0c,0x0d,0x0e,0x0f,0x10,0x11,0x12,  /* ge8-15  -> jacks 9-16  */
+    0x15,0x16,0x17,0x18,0x19,0x1a,0x1b,0x1c,  /* ge16-23 -> jacks 17-24 */
+    0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,  /* ge24-31 -> jacks 25-32 */
+    0x2b,0x2c,0x2d,0x2e,0x2f,0x30,0x31,0x32,  /* ge32-39 -> jacks 33-40 */
+    0x35,0x36,0x37,0x38,0x39,0x3a,0x3b,0x3c,  /* ge40-47 -> jacks 41-48 */
+};
+
+/* Read the copper link bit straight from each 54282 over the CMIC MIIM at its
+ * config.bcm address (EBUS0) — bypasses edged's port->phy map so we can see which
+ * front-panel jack is actually linked, independent of the logical-port mapping.
+ * 54282 is clause-22: MII status reg 0x01 bit 2 = link (latched, read twice);
+ * reg 0x11 (Aux Status Summary) bits 8-10 = speed. */
+/* Reverse-map a responding MDIO (bus,addr) back to its front-panel jack. The
+ * board puts ge0-23 (jacks 1-24) on EBUS0 at addr 0x01-0x1c, and ge24-47
+ * (jacks 25-48) on EBUS1 at the SAME low addrs — config.bcm encodes that upper
+ * bank as the 0x20 bit (so config 0x21-0x3c == EBUS1 addr 0x01-0x1c). Returns -1
+ * if (bus,addr) isn't a known ge jack. */
+static int
+jack_for_addr(int bus, uint8_t a)
+{
+    uint8_t cfg = bus ? (uint8_t)(0x20 | a) : a;
+    int g;
+    for (g = 0; g < 48; g++) if (ge_phy_addr[g] == cfg) return g + 1;
+    return -1;
+}
+
+/* True if a C22 PHY-ID (reg2:reg3) is a BCM54282 copper PHY (600d:845x). */
+static int
+is_54282(uint32_t id1, uint32_t id2)
+{
+    return id1 == 0x600d && (id2 & 0xfff0) == 0x8450;
+}
+
+/* Empirical copper PHY/link sweep: walk EBUS0 (and EBUS1 as a fallback) reading
+ * the 54282 via clause-22 — PHY ID (reg2/3), MII status (reg1, link bit 2), and
+ * Aux Status (reg0x11, speed). Reports every address that answers so we can see
+ * the TRUE 54282 layout and which front-panel jack is actually linked, regardless
+ * of edged's internal port->phy map. */
+static void
+scan_link(int unit)
+{
+    int bus, a, answered = 0, up_count = 0;
+    LOG("copper link sweep (clause-22): EBUS0/EBUS1, addr 0x01-0x3f");
+    LOG("  per-addr: PHYID reg2:reg3, MII-status reg1 (bit2=link), Aux reg0x11");
+    for (bus = 0; bus <= 1; bus++) {
+        for (a = 1; a <= 0x3f; a++) {
+            uint32_t addr = (bus ? CDK_XGSM_MIIM_EBUS(1) : CDK_XGSM_MIIM_EBUS(0)) | a;
+            uint32_t id1 = 0, id2 = 0, st = 0, aux = 0;
+            int jack, up;
+            const char *spd = "?";
+            if (cdk_xgsm_miim_read(unit, addr, 0x02, &id1) < 0) continue;
+            cdk_xgsm_miim_read(unit, addr, 0x03, &id2);
+            if ((id1 == 0xffff || id1 == 0x0000) &&
+                (id2 == 0xffff || id2 == 0x0000)) continue;  /* nothing here */
+            answered++;
+            cdk_xgsm_miim_read(unit, addr, 0x01, &st);       /* clear latch */
+            cdk_xgsm_miim_read(unit, addr, 0x01, &st);
+            cdk_xgsm_miim_read(unit, addr, 0x11, &aux);
+            up = (st & 0x0004) ? 1 : 0;
+            switch ((aux >> 8) & 0x7) {
+                case 0x7: spd="1000F"; break; case 0x6: spd="1000H"; break;
+                case 0x5: spd="100F";  break; case 0x3: spd="100H";  break;
+                case 0x2: spd="10F";   break; case 0x1: spd="10H";   break;
+            }
+            jack = jack_for_addr(bus, (uint8_t)a);
+            LOG("  EBUS%d 0x%02x  id=%04x:%04x  st=0x%04x %s  aux=0x%04x spd=%s  %s",
+                bus, a, id1, id2, st, up ? "LINK-UP" : "down", aux, spd,
+                jack > 0 ? "" : "(not a ge jack)");
+            if (jack > 0) LOG("        ^ front-panel JACK %d (ge%d)%s",
+                              jack, jack - 1, up ? "  *** LINKED ***" : "");
+            if (up) up_count++;
+        }
+    }
+    LOG("copper link sweep done: %d PHY(s) answered, %d link UP", answered, up_count);
+}
+
+/* Kick every 54282 copper PHY into autoneg and re-read link. reg0 (MII control)
+ * = 0x1200 = autoneg-enable(0x1000) + restart-autoneg(0x0200), with power-down
+ * (bit11), isolate (bit10) and loopback (bit14) all CLEAR — so this also wakes a
+ * powered-down copper PHY. We hit the 54282s found by ID (600d:845b) on EBUS0+1,
+ * wait for autoneg, then report which front-panel jacks come up. */
+static uint32_t
+miim_addr(int bus, uint8_t a)
+{
+    return (bus ? CDK_XGSM_MIIM_EBUS(1) : CDK_XGSM_MIIM_EBUS(0)) | a;
+}
+
+static void
+copper_up(int unit)
+{
+    int bus, a, n_phy = 0, up = 0, i, poll;
+    struct { int bus; uint8_t a; } phys[128];
+    uint32_t r0a = 0, r0b = 0, rb = 0;
+
+    LOG("copper bring-up: collect 54282s, test addressing, restart autoneg, poll link");
+    for (bus = 0; bus <= 1; bus++) {
+        for (a = 1; a <= 0x3f; a++) {
+            uint32_t id1 = 0, id2 = 0;
+            if (cdk_xgsm_miim_read(unit, miim_addr(bus, (uint8_t)a), 0x02, &id1) < 0) continue;
+            cdk_xgsm_miim_read(unit, miim_addr(bus, (uint8_t)a), 0x03, &id2);
+            if (!is_54282(id1, id2)) continue;
+            if (n_phy < 128) { phys[n_phy].bus = bus; phys[n_phy].a = (uint8_t)a; n_phy++; }
+        }
+    }
+    LOG("  found %d BCM54282 copper PHYs", n_phy);
+    if (n_phy < 2) { LOG("  too few PHYs to test"); return; }
+
+    /* ADDRESSING/ALIASING TEST: write 0x0800 (isolate) to PHY[0] only, read both
+     * PHY[0] and PHY[1]'s reg0. If PHY[1] also changed, the MDIO addressing is
+     * aliasing (not selecting individual PHYs) -> explains identical status. */
+    cdk_xgsm_miim_write(unit, miim_addr(phys[0].bus, phys[0].a), 0x00, 0x0800);
+    cdk_xgsm_miim_write(unit, miim_addr(phys[1].bus, phys[1].a), 0x00, 0x1000);
+    cdk_xgsm_miim_read(unit, miim_addr(phys[0].bus, phys[0].a), 0x00, &r0a);
+    cdk_xgsm_miim_read(unit, miim_addr(phys[1].bus, phys[1].a), 0x00, &r0b);
+    LOG("  addr-test: PHY0(EBUS%d 0x%02x) reg0<-0x0800 reads 0x%04x ; "
+        "PHY1(EBUS%d 0x%02x) reg0<-0x1000 reads 0x%04x  => %s",
+        phys[0].bus, phys[0].a, r0a, phys[1].bus, phys[1].a, r0b,
+        (r0a != r0b) ? "DISTINCT (addressing OK)" : "SAME (ALIASED!)");
+
+    /* Restart autoneg on every copper PHY (0x1200 = AN enable+restart, power-up,
+     * no isolate/loopback), confirm the write sticks on PHY0. */
+    for (i = 0; i < n_phy; i++)
+        cdk_xgsm_miim_write(unit, miim_addr(phys[i].bus, phys[i].a), 0x00, 0x1200);
+    cdk_xgsm_miim_read(unit, miim_addr(phys[0].bus, phys[0].a), 0x00, &rb);
+    LOG("  reg0 readback after AN-restart on PHY0: 0x%04x (expect 0x1000/0x1200)", rb);
+
+    /* Poll link for up to 8s. */
+    for (poll = 0; poll < 8; poll++) {
+        struct timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
+        nanosleep(&ts, NULL);
+        up = 0;
+        for (i = 0; i < n_phy; i++) {
+            uint32_t st = 0;
+            cdk_xgsm_miim_read(unit, miim_addr(phys[i].bus, phys[i].a), 0x01, &st);
+            cdk_xgsm_miim_read(unit, miim_addr(phys[i].bus, phys[i].a), 0x01, &st);
+            if (st & 0x0004) up++;
+        }
+        LOG("  t=%ds: %d/%d copper PHY(s) link UP", poll + 1, up, n_phy);
+        if (up > 0) break;
+    }
+
+    /* DECISIVE: does ANY copper port see the cable? Read Broadcom real-time
+     * status regs for all 48 and flag any that differ from PHY0 — a cabled port
+     * (energy / AN-in-progress / link) will diverge from the idle pack.
+     *   reg 0x19 = Aux Status Summary (b2=link, b8-10=speed, b15-13 misc)
+     *   reg 0x0a = 1000BASE-T Status  (b13=LP 1000T-able, b11/12 rx-status)
+     *   reg 0x18.shadow / reg 0x01 already known idle. */
+    {
+        uint32_t a19_0 = 0, a0a_0 = 0, st_0 = 0;
+        int diff = 0;
+        cdk_xgsm_miim_read(unit, miim_addr(phys[0].bus, phys[0].a), 0x19, &a19_0);
+        cdk_xgsm_miim_read(unit, miim_addr(phys[0].bus, phys[0].a), 0x0a, &a0a_0);
+        cdk_xgsm_miim_read(unit, miim_addr(phys[0].bus, phys[0].a), 0x01, &st_0);
+        LOG("  baseline (PHY0): reg1=0x%04x reg0x19=0x%04x reg0x0a=0x%04x", st_0, a19_0, a0a_0);
+        for (i = 0; i < n_phy; i++) {
+            uint32_t a19 = 0, a0a = 0, st = 0;
+            int jack;
+            cdk_xgsm_miim_read(unit, miim_addr(phys[i].bus, phys[i].a), 0x19, &a19);
+            cdk_xgsm_miim_read(unit, miim_addr(phys[i].bus, phys[i].a), 0x0a, &a0a);
+            cdk_xgsm_miim_read(unit, miim_addr(phys[i].bus, phys[i].a), 0x01, &st);
+            cdk_xgsm_miim_read(unit, miim_addr(phys[i].bus, phys[i].a), 0x01, &st);
+            if (a19 == a19_0 && a0a == a0a_0 && (st & 0x0004) == 0) continue; /* same as idle */
+            jack = jack_for_addr(phys[i].bus, phys[i].a);
+            LOG("  DIFFERS: EBUS%d 0x%02x (jack %d): reg1=0x%04x reg0x19=0x%04x reg0x0a=0x%04x%s",
+                phys[i].bus, phys[i].a, jack, st, a19, a0a, (st & 0x0004) ? "  LINK!" : "");
+            diff++;
+        }
+        if (!diff)
+            LOG("  ALL 48 copper PHYs read IDENTICAL idle status — NO port sees a "
+                "cable/energy. Copper side is uniformly un-driven (line-side/init), "
+                "not a per-jack issue.");
+    }
+    LOG("copper bring-up done: %d/%d PHY(s) link UP", up, n_phy);
+}
+
+/* Enable the SFP+ optical transmitter on the BCM84758 (xe0-3 at EBUS2 0x80-0x83).
+ * OpenMDK's bcm84740 driver never deasserts TX — so the 84758 holds the SFP
+ * TX_DISABLE pin asserted (laser off -> RX_LOS at the link partner). Replicates
+ * robo2-xsdk phy_84740_enable_set(enable=1): clear the IEEE PMD global TX-disable
+ * (1.0009 bit0) + the 84740 GENSIG TX-disable (1.0x8071 bit3). */
+/* BCM84740-family optical-interface registers (PMA/PMD = devad 1), addresses
+ * from the OpenMDK bcm84740/bcm8754 drivers + robo2-xsdk phy84740.c:
+ *   1.0xc8e4 OPTICAL_CFG  : b3=MOD_PRESENCE, b4=lane power(0=on), b12=TxOn(0=on),
+ *                           RXLOS override=0xc0c0, MOD_ABS override=0x0808
+ *                           (OpenMDK writes 0xc8c8 = both overrides + present).
+ *   1.0xc8e5 OPTICAL_SIG_LVL : RX_LOS / MOD_ABS level bits.
+ *   1.0x0009 PMD_TX_DISABLE  : b0=global PMD TX disable (0=on).
+ *   1.0xcd16 GENSIG_8071     : b3=TX disable in LP/single mode (0=on).
+ *   1.0xc702 AER_ADDR        : lane select (0 for these single-port SFP+). */
+#define X84_OPT_CFG     0xc8e4
+#define X84_OPT_SIGLVL  0xc8e5
+#define X84_TX_DISABLE  0x0009
+#define X84_GENSIG_8071 0xcd16
+#define X84_AER_ADDR    0xc702
+
+static void
+sfp_tx_enable(int unit)
+{
+    int s;
+    LOG("SFP+ 84758: optical TX-enable sequence (c8e4 override+present, "
+        "clear 1.0009 b0 / 1.cd16 b3) on xe0-3");
+    for (s = 0; s < 4; s++) {
+        uint32_t addr = CDK_XGSM_MIIM_EBUS(2) | s;
+        uint32_t v = 0;
+        /* Point AER at lane 0 (single-port SFP+). */
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_AER_ADDR, 0);
+        /* OPTICAL_CFG: set both overrides (0xc0c0|0x0808) + MOD_PRESENCE (b3),
+         * and ensure TxOn (b12) + lane-power (b4) are ON (=0). = 0xc8c8. */
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_CFG, 0xc8c8);
+        /* Global PMD TX disable: clear b0. */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_TX_DISABLE, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_TX_DISABLE, v & ~0x1u);
+        /* GENSIG TX disable (LP/single-port path): clear b3. */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_GENSIG_8071, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_GENSIG_8071, v & ~0x8u);
+        /* TxOnOff strap workaround: c8e4[4] = TxOnOff_pin XOR c800[7]. When
+         * c8e4[4]=1 the TX is held in low-power (laser off). Toggle 0xc800[7] to
+         * drive c8e4[4] back to 0 (TX active). (robo2 phy_84740_enable_set.) */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &v);
+        if (v & (1u << 4)) {
+            uint32_t c800 = 0;
+            cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0xc800, &c800);
+            cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0xc800,
+                                (c800 & (1u << 7)) ? (c800 & ~(1u << 7))
+                                                   : (c800 | (1u << 7)));
+        }
+        /* Clear the c8e4 RX_LOS override (0xc0c0) so the 84758 uses the REAL
+         * optical RX_LOS (now good: module rx_los=0, light present) instead of the
+         * driver-forced value that pins sigdet=0. Without this the media PCS never
+         * sees "signal present" and won't block-lock the incoming 10G. Keep the
+         * MOD_ABS override (0x0808) + TxOn/lane bits. */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_CFG, v & ~0xc0c0u);
+    }
+}
+
+static int
+parse_unit(const char *s, uint32_t *ven, uint32_t *dev, uint32_t *rev, uint32_t *base)
+{
+    return sscanf(s, "0x%x:0x%x:0x%x@0x%x", ven, dev, rev, base) == 4 ? 0 : -1;
+}
+
+static void
+usage(const char *p)
+{
+    fprintf(stderr,
+        "usage: %s [--unit V:D:R@BASE] [--keep]\n"
+        "  --unit  device spec (default: %s)\n"
+        "  --keep  stay resident: monitor link + re-sync MAC on link changes\n",
+        p, EDGED_DEFAULT_UNIT);
+}
+
+/* Resident control loop: poll link, log transitions, re-sync MAC on change. */
+static void
+control_loop(int unit)
+{
+    int i;
+
+    LOG("--keep: control loop active (%ds poll, %d ports)", LINK_POLL_SEC, n_front);
+    for (;;) {
+        for (i = 0; i < n_front; i++) {
+            int port = front_ports[i];
+            bmd_port_mode_t mode;
+            uint32_t flags = 0;
+            int up;
+
+            /* Let the BMD reconcile MAC config with current link status. */
+            bmd_port_mode_update(unit, port);
+
+            if (bmd_port_mode_get(unit, port, &mode, &flags) < 0) {
+                continue;
+            }
+            up = (flags & BMD_PORT_MODE_F_LINK_UP) ? 1 : 0;
+            if (up != link_state[i]) {
+                LOG("port %d link %s%s%s", port,
+                    up ? "UP" : "DOWN",
+                    up ? " @ " : "",
+                    up ? mode_str(mode) : "");
+                link_state[i] = up;
+            }
+        }
+        {
+            struct timespec ts = { .tv_sec = LINK_POLL_SEC, .tv_nsec = 0 };
+            nanosleep(&ts, NULL);
+        }
+    }
+}
+
+int
+main(int argc, char *argv[])
+{
+    const char *unitspec = EDGED_DEFAULT_UNIT;
+    uint32_t ven, dev, rev, base;
+    int keep = 0;
+    int scan = 0;
+    int try_10g = 0;   /* --try-10g: experimental SFP+ 10G dyn-config (breaks L2) */
+    int unit = 0;
+    int rc, i, port;
+
+    for (i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--unit") || !strcmp(argv[i], "-u")) {
+            if (++i >= argc) { usage(argv[0]); return 2; }
+            unitspec = argv[i];
+        } else if (!strcmp(argv[i], "--memdump")) {
+            /* --memdump <hexaddr> <nwords>: raw /dev/mem region dump, then exit.
+             * Used to capture/diff iProc + CMIC register state vs ICOS. */
+            uint32_t a, nw, j, pg, off;
+            volatile uint32_t *m;
+            if (i + 2 >= argc) { usage(argv[0]); return 2; }
+            a = (uint32_t)strtoul(argv[i + 1], NULL, 16);
+            nw = (uint32_t)strtoul(argv[i + 2], NULL, 0);
+            pg = a & ~0xfffu; off = a - pg;
+            m = _mmap(pg, (off + nw * 4 + 0xfff) & ~0xfffu);
+            if (m == NULL) { return 1; }
+            for (j = 0; j < nw; j++) {
+                printf("0x%08x: 0x%08x\n", a + j * 4, m[(off / 4) + j]);
+            }
+            return 0;
+        } else if (!strcmp(argv[i], "--memwrite")) {
+            /* --memwrite <hexaddr> <hexval>: write one /dev/mem word, then exit.
+             * Used to replay ICOS's CMIC MIIM bus-map registers. */
+            uint32_t a, v, pg, off;
+            volatile uint32_t *m;
+            if (i + 2 >= argc) { usage(argv[0]); return 2; }
+            a = (uint32_t)strtoul(argv[i + 1], NULL, 16);
+            v = (uint32_t)strtoul(argv[i + 2], NULL, 16);
+            pg = a & ~0xfffu; off = a - pg;
+            m = _mmap(pg, 0x1000);
+            if (m == NULL) { return 1; }
+            m[off / 4] = v;
+            printf("wrote 0x%08x = 0x%08x (readback 0x%08x)\n", a, v, m[off / 4]);
+            return 0;
+        } else if (!strcmp(argv[i], "--keep") || !strcmp(argv[i], "-k")) {
+            keep = 1;
+        } else if (!strcmp(argv[i], "--scan-mdio")) {
+            scan = 1;
+        } else if (!strcmp(argv[i], "--scan-link")) {
+            scan = 2;
+        } else if (!strcmp(argv[i], "--copper-up")) {
+            scan = 3;
+        } else if (!strcmp(argv[i], "--up-check")) {
+            scan = 4;
+        } else if (!strcmp(argv[i], "--try-10g")) {
+            try_10g = 1;
+        } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
+            usage(argv[0]); return 0;
+        } else {
+            LOG("unrecognized option '%s'", argv[i]);
+            usage(argv[0]); return 2;
+        }
+    }
+
+    if (parse_unit(unitspec, &ven, &dev, &rev, &base) < 0) {
+        LOG("malformed --unit '%s'", unitspec);
+        return 2;
+    }
+
+    LOG("EdgeNOS-4610 data-plane daemon starting");
+    LOG("device 0x%04x:0x%04x rev 0x%02x, CMIC @ phys 0x%08x (/dev/mem)",
+        ven, dev, rev, base);
+
+    /* 1. Create CDK device (maps the CMIC). */
+    if (_create_cdk_device(ven, dev, rev, base) < 0) {
+        LOG("FATAL: could not create CDK device (need root / STRICT_DEVMEM off)");
+        return 1;
+    }
+
+    /* NOTE on SFP+ 10G: under the default BCM56340 port config (cfg 400) the SFP+
+     * ports are capped at 2.5G (forced 10G -> CDK_E_PARAM). No OpenMDK static port
+     * config gives 48x1G copper AND 4x10G SFP+ together: cfg 400 = 48 copper +
+     * SFP@2.5G; DCFG_4X10 -> cfg 410 = 1x20G flex (ports 50-52 disabled);
+     * CHIP_FLAG_NO_HG -> cfg 497 = 4x10G but only 40 copper (41-48 disabled). The
+     * board's real 48+4x10G personality (config.bcm bcm56340_4x10=1) needs the full
+     * Broadcom SDK flexport bring-up, which OpenMDK's BMD lacks. So we stay on cfg
+     * 400; SFP+ lasers are enabled (sfp_tx_enable) and the optical link is live, but
+     * the MAC/PCS stays sub-10G pending a flexport port. */
+
+    /* 1b. Enable external MDIO BEFORE the PHY probe: deassert the front-panel
+     * PHY reset (CPLD) + program the CMIC MIIM bus map. Without this the probe
+     * can't see the external 54282/84758 PHYs. */
+    deassert_ext_phy_reset();
+    write_icos_miim_map();
+
+    /* 2. Probe PHY drivers + attach the BMD driver. */
+#if BMD_CONFIG_INCLUDE_PHY == 1
+    bmd_phy_probe_init(bmd_phy_probe_default, bmd_phy_drv_list);
+#endif
+    if ((rc = bmd_attach(unit)) < 0) {
+        LOG("FATAL: bmd_attach: %s (%d)", CDK_ERRMSG(rc), rc);
+        return 1;
+    }
+    LOG("[1/6] attach        OK");
+
+    /* SFP+ 10G is enabled by patching the static port_speed_max_400 table (the SFP+
+     * entries 2500->10000 in bcm56340_a0_bmd_attach.c) — a surgical change that only
+     * touches the 4 SFP+ ports, unlike the dyn-config path which disturbed every
+     * port's VLAN/STP model. With that table edit bmd_port_mode_set accepts 10G on
+     * the SFP+; their bmd_switching_init config may still fail (TDM is nominal 2.5G),
+     * which the non-fatal switching_init patch tolerates. (try_10g kept for the
+     * forced-10G step below.) */
+    (void)edged_pcfg_id;
+
+    /* 3. Chip reset — sets up TOP_CORE_PLL + core clocks (MUST be before init). */
+    if ((rc = bmd_reset(unit)) < 0) {
+        LOG("FATAL: bmd_reset: %s (%d)", CDK_ERRMSG(rc), rc);
+        return 1;
+    }
+    LOG("[2/6] bmd_reset     OK  (core PLL + clocks up)");
+
+    /* CRITICAL for copper: bmd_init runs the PHY PROBE internally (bmd_phy_probe),
+     * and the external 54282/84758 PHYs are only readable once the CMIC MIIM bus
+     * map @0x48011000 is programmed. bmd_reset clears that map, so we must restore
+     * it HERE — before bmd_init — or the probe can't see the external copper PHYs
+     * and the bcm54282 driver never binds (copper stays un-driven). */
+    write_icos_miim_map();
+
+    /* 4. Chip init — block resets (IPIPE/EPIPE/ISM/AXP) over SCHAN; also probes +
+     *    inits the PHYs (now that the bus map above lets it reach the externals). */
+    if ((rc = bmd_init(unit)) < 0) {
+        LOG("FATAL: bmd_init: %s (%d)  <- SCHAN to core failed?", CDK_ERRMSG(rc), rc);
+        return 1;
+    }
+    LOG("[3/6] bmd_init      OK  (SCHAN core access working)");
+
+    /* Re-assert the external MDIO bus map in case bmd_reset cleared it, so port
+     * bring-up (PHY init / ucode download) can reach the external PHYs. */
+    write_icos_miim_map();
+
+    /* Copper bring-up: bmd_init's INTERNAL PHY probe ran before the bus map was
+     * live (bmd_init zeroes 0x48011000 before probing), so the external BCM54282
+     * copper PHYs bound the generic 'unknown' driver instead of bcm54282 — leaving
+     * the copper media un-driven. Now that the bus map is restored (external MDIO
+     * reads work here), re-probe + re-init the copper ports (1-48) so the real
+     * bcm54282 driver binds and configures the copper side. bmd_phy_probe rebuilds
+     * the whole chain (removes 'unknown', rebinds bcm54282 + the internal serdes);
+     * unknown_drv is last in the list so bcm54282 gets first claim. Limited to the
+     * copper range to avoid disturbing the SFP+/QSFP (84758/Warpcore) path. */
+    {
+        int p, reb = 0, n54282 = 0;
+        for (p = 1; p <= 48; p++) {
+            phy_ctrl_t *pc;
+            if (bmd_phy_probe(unit, p) < 0) {
+                continue;   /* not a valid/external-bus port */
+            }
+            for (pc = BMD_PORT_PHY_CTRL(unit, p); pc != NULL; pc = pc->next) {
+                if (pc->drv && pc->drv->drv_name &&
+                    !strcmp(pc->drv->drv_name, "bcm54282")) {
+                    n54282++;
+                }
+            }
+            bmd_phy_init(unit, p);
+            reb++;
+        }
+        LOG("ext-copper: re-probed %d ports, %d now bound bcm54282", reb, n54282);
+    }
+
+    /* MDIO scan mode: bmd_init has now configured the external MDIO clock
+     * (CMIC_RATE_ADJUST), so external PHYs are reachable. Scan + exit. */
+    if (scan == 1) {
+        scan_mdio(unit);
+        return 0;
+    }
+    if (scan == 2) {
+        scan_link(unit);
+        return 0;
+    }
+    if (scan == 3) {
+        scan_link(unit);
+        copper_up(unit);
+        return 0;
+    }
+
+    /* 5. L2 switching init (default VLAN 1, flood/learn). NON-FATAL: under cfg 410
+     * bcm56340_a0_bmd_switching_init aborts CDK_E_PARAM when it tries to bring up
+     * the unwired 20G flex ports — but by then the chip reset/init + most port
+     * config have run, and step 6 below re-configures every port tolerantly. So we
+     * log and proceed instead of killing the whole data plane. */
+    if ((rc = bmd_switching_init(unit)) < 0) {
+        LOG("[4/6] swinit        WARN rc=%s (%d) — continuing (cfg-410 flex-port "
+            "abort; step 6 re-configures ports)", CDK_ERRMSG(rc), rc);
+    } else {
+        LOG("[4/6] swinit        OK  (L2 switching initialized)");
+    }
+
+    /* 6. Bring every valid front port up at its native speed (autoneg/Auto =
+     *    per-type: 1G copper autoneg, 10G SFP+, 20G QSFP). Collect the ports
+     *    that accept a mode into front_ports[] (internal ports reject it). */
+    {
+        cdk_pbmp_t pbmp = CDK_DEV(unit)->valid_pbmps;
+        int nport = 0;
+
+        n_front = 0;
+        CDK_PBMP_ITER(pbmp, port) {
+            if (port == 0) {
+                continue;  /* CPU/CMIC port */
+            }
+            nport++;
+            rc = bmd_port_mode_set(unit, port, bmdPortModeAuto, 0);
+            if (rc < 0) {
+                continue;  /* internal/non-front port */
+            }
+            if (n_front < MAX_FRONT_PORTS) {
+                front_ports[n_front] = port;
+                link_state[n_front] = -1;   /* unknown -> force first transition log */
+                n_front++;
+            }
+        }
+        LOG("[5/6] ports        %d/%d front ports up (native speed)", n_front, nport);
+
+        /* Force the SFP+ ports to 10G (the static port_speed_max_400 edit makes them
+         * 10G-capable). 10G fiber has no autoneg, so Auto won't pick it. Try the 10G
+         * submodes; use whichever the SerDes accepts -> drives Warpcore + 84758 to
+         * 10G. (try_10g no longer needed — kept as a no-op escape hatch.) */
+        if (1) {
+            (void)try_10g;
+            static const struct { bmd_port_mode_t m; const char *n; } x10g[] = {
+                { bmdPortMode10000XFI, "XFI" }, { bmdPortMode10000SFI, "SFI" },
+                { bmdPortMode10000fd,  "fd"  }, { bmdPortMode10000KR,  "KR" },
+            };
+            int xp, j;
+            for (xp = SFP_LO; xp <= SFP_HI; xp++) {
+                for (j = 0; j < (int)(sizeof(x10g)/sizeof(x10g[0])); j++) {
+                    int prc = bmd_port_mode_set(unit, xp, x10g[j].m, 0);
+                    if (prc >= 0) { LOG("       SFP+ port %d -> 10G %s", xp, x10g[j].n); break; }
+                    if (j == (int)(sizeof(x10g)/sizeof(x10g[0])) - 1)
+                        LOG("       SFP+ port %d: 10G rejected (%s)", xp, CDK_ERRMSG(prc));
+                }
+            }
+        }
+    }
+
+    /* 7. Put every front port into STP FORWARDING so L2 actually forwards.
+     *    (swinit leaves ports in the default STP state; without this they would
+     *    not forward once a link comes up.) */
+    {
+        int nfwd = 0;
+        for (i = 0; i < n_front; i++) {
+            if (bmd_port_stp_set(unit, front_ports[i], bmdSpanningTreeForwarding) >= 0) {
+                nfwd++;
+            }
+        }
+        LOG("[6/6] L2 forward   %d/%d ports set to STP FORWARDING (VLAN 1)", nfwd, n_front);
+    }
+
+    /* Port inventory by speed (read back resolved modes). */
+    {
+        int c1g = 0, c10g = 0, c20g = 0, cother = 0;
+        for (i = 0; i < n_front; i++) {
+            bmd_port_mode_t mode;
+            uint32_t flags = 0;
+            const char *s;
+            if (bmd_port_mode_get(unit, front_ports[i], &mode, &flags) < 0) {
+                continue;
+            }
+            s = mode_str(mode);
+            if      (!strcmp(s, "1G"))  c1g++;
+            else if (!strcmp(s, "10G")) c10g++;
+            else if (!strcmp(s, "20G")) c20g++;
+            else                        cother++;
+        }
+        LOG("inventory: %d×1G  %d×10G  %d×20G  %d×other", c1g, c10g, c20g, cother);
+    }
+
+    /* Verify the external 84758 SFP+ PHY: it's reachable (after CPLD de-reset +
+     * bus map) and its firmware checksum reg (PMA-PMD 0xca1c) reads 0x600d once
+     * the ucode is loaded. 84758 is at CMIC MIIM EBUS2 addr 0-3 (cdk 0x80-0x83). */
+    {
+        uint32_t id1 = 0, cs = 0;
+        cdk_xgsm_miim_read(unit, 0x80, (1 << 16) | 0x03, &id1);
+        cdk_xgsm_miim_read(unit, 0x80, (1 << 16) | 0xca1c, &cs);
+        LOG("84758(xe0) PMA-PMD ID1=0x%04x  fw-checksum(1.0xca1c)=0x%04x %s",
+            id1 & 0xffff, cs & 0xffff,
+            ((cs & 0xffff) == 0x600d) ? "<== UCODE LOADED" :
+            ((id1 & 0xfff0) == 0x86f0) ? "(PHY reachable, ucode not yet loaded)" :
+            "(PHY not reachable)");
+    }
+
+    /* Turn the SFP+ optical transmitters on (OpenMDK's bcm84740 driver leaves the
+     * 84758 holding the SFP TX_DISABLE pin asserted). Without this the laser is off
+     * and the link partner sees RX_LOS. */
+    sfp_tx_enable(unit);
+
+    LOG("data plane UP: BCM56340 initialized, switching-ready, ports forwarding");
+
+    /* --up-check: after the FULL bring-up (so bmd_port_mode_set has configured the
+     * 54282 copper PHYs), read the real per-jack copper link directly over MDIO. */
+    if (scan == 4) {
+        int dports[10] = { 1, 23, 49, 50, 51, 52, 53, 54, 57, 61 };  /* copper + SFP+/QSFP */
+        int k;
+        for (k = 0; k < 10; k++) {
+            int p = dports[k], link = -1, an = -1;
+            phy_ctrl_t *pc = BMD_PORT_PHY_CTRL(unit, p);
+            LOG("port %d PHY chain:", p);
+            if (!pc) LOG("    (no PHY ctrl bound)");
+            while (pc) {
+                LOG("    drv=%-14s bus=%-22s addr=0x%02x",
+                    pc->drv ? pc->drv->drv_name : "?",
+                    pc->bus ? pc->bus->drv_name : "?",
+                    PHY_CTRL_PHY_ADDR(pc));
+                pc = pc->next;
+            }
+            if (bmd_phy_link_get(unit, p, &link, &an) >= 0)
+                LOG("    bmd_phy_link_get: link=%d an_done=%d", link, an);
+        }
+        LOG("--up-check: waiting 5s for copper autoneg to settle...");
+        { struct timespec ts = { .tv_sec = 5, .tv_nsec = 0 }; nanosleep(&ts, NULL); }
+        scan_link(unit);
+
+        /* sfp_tx_enable() already ran in the main flow; give the partner RX a
+         * moment to detect light / PCS to lock, then read status. */
+        { struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 }; nanosleep(&ts, NULL); }
+
+        /* SFP+ 84758 status: read PMD signal-detect + PCS block-lock per SFP+ at
+         * EBUS2 0x80-0x83 (xe0-3). Tells us if the fiber RX has light + PCS lock. */
+        {
+            int s;
+            LOG("SFP+ 84758 status (EBUS2 0x80-0x83 = xe0-3):");
+            for (s = 0; s < 4; s++) {
+                uint32_t addr = CDK_XGSM_MIIM_EBUS(2) | s;
+                uint32_t pmd_sd = 0, blk = 0, cfg = 0, sig = 0, txd = 0, gs = 0;
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x000a, &pmd_sd);  /* PMD signal detect */
+                cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0020, &blk);     /* 10GBASE-R PCS: b0=block lock */
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &cfg);
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_SIGLVL, &sig);
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_TX_DISABLE, &txd);
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_GENSIG_8071, &gs);
+                LOG("  xe%d(0x%02x) sigdet=0x%04x blklock=0x%04x | c8e4=0x%04x "
+                    "c8e5=0x%04x 1.0009=0x%04x cd16=0x%04x %s", s, addr,
+                    pmd_sd & 0xffff, blk & 0xffff, cfg & 0xffff, sig & 0xffff,
+                    txd & 0xffff, gs & 0xffff,
+                    (blk & 0x1) ? "<== BLOCK LOCK" :
+                    (pmd_sd & 0x1) ? "(signal,no lock)" : "(no signal)");
+            }
+        }
+    }
+
+    if (keep) {
+        control_loop(unit);   /* never returns */
+    }
+    return 0;
+}

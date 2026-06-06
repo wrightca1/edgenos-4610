@@ -42,8 +42,12 @@ docker run --rm -u root:0 \
     # command-line CFLAGS suppresses).
     # SYS_BE_*=0: AS4610 (ARM/armhf) is little-endian, so PIO/packet/other bus
     # byte-order flags are all 0 (the app #errors if they are undefined).
+    # PHY_CONFIG_INCLUDE_BCM84740=1: register the bcm84740 driver (extended to
+    # also claim the 84740-family BCM84758 SFP+ PHY on xe0-3 and load its ucode).
+    # PHY_CONFIG_INCLUDE_BCM54282=1: register the bcm54282 driver for the 48x 1G
+    # copper RJ-45 ports (octal QSGMII PHYs) so the probe binds + inits them.
     make MAKE=make MDK="$MDK" CROSS_COMPILE=arm-linux-gnueabihf- \
-         CFLAGS="-fPIC -Wall -Wno-error -DSYS_BE_PIO=0 -DSYS_BE_PACKET=0 -DSYS_BE_OTHER=0" 2>&1
+         CFLAGS="-fPIC -Wall -Wno-error -DSYS_BE_PIO=0 -DSYS_BE_PACKET=0 -DSYS_BE_OTHER=0 -DPHY_CONFIG_INCLUDE_BCM84740=1 -DPHY_CONFIG_INCLUDE_BCM54282=1" 2>&1
   '
 
 echo

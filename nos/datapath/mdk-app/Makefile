@@ -179,15 +179,22 @@ OBJS = linux-user.o linux_shbde.o
 BOBJS = $(addprefix $(BLDDIR)/,$(OBJS))
 APPL = $(DSTDIR)/linux-user-mdk
 
+# EdgeNOS data-plane daemon (our code; reuses the BDE shim, no interactive shell)
+EOBJS = edged.o linux_shbde.o
+BEOBJS = $(addprefix $(BLDDIR)/,$(EOBJS))
+EDGED = $(DSTDIR)/edged
+
 ################################################################################
 #
 # Make rules
 #
 ################################################################################
 
-.PHONY: all cdk clean cleanall bmd phy libbde
+.PHONY: all cdk clean cleanall bmd phy libbde edged
 
-all: cdk phy bmd libbde $(APPL)
+all: cdk phy bmd libbde $(APPL) $(EDGED)
+
+edged: cdk phy bmd libbde $(EDGED)
 
 cdk:
 	$(MAKE) -C $(CDK)
@@ -203,6 +210,9 @@ libbde:
 
 $(APPL): cdk bmd phy libbde $(BOBJS) $(LIBBDE_BLIBS) $(PHY_BLIBS) $(BMD_BLIBS) $(CDK_BLIBS)
 	$(CC) $(BOBJS) $(BMD_BLIBS) $(LIBBDE_BLIBS) $(PHY_BLIBS) $(CDK_BLIBS) $(OSLIBS) $(LDFLAGS) -o $@
+
+$(EDGED): cdk bmd phy libbde $(BEOBJS) $(LIBBDE_BLIBS) $(PHY_BLIBS) $(BMD_BLIBS) $(CDK_BLIBS)
+	$(CC) $(BEOBJS) $(BMD_BLIBS) $(LIBBDE_BLIBS) $(PHY_BLIBS) $(CDK_BLIBS) $(OSLIBS) $(LDFLAGS) -o $@
 
 $(BLDDIR)/%.o: %.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@

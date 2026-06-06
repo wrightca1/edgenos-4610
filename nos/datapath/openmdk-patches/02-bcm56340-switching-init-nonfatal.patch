@@ -1,0 +1,23 @@
+diff --git a/bmd/PKG/chip/bcm56340_a0/bcm56340_a0_bmd_switching_init.c b/bmd/PKG/chip/bcm56340_a0/bcm56340_a0_bmd_switching_init.c
+index 488a66a..921066b 100644
+--- a/bmd/PKG/chip/bcm56340_a0/bcm56340_a0_bmd_switching_init.c
++++ b/bmd/PKG/chip/bcm56340_a0/bcm56340_a0_bmd_switching_init.c
+@@ -91,7 +91,17 @@ bcm56340_a0_bmd_switching_init(int unit)
+             }
+         }
+         if (CDK_SUCCESS(rv)) {
+-            rv = _config_port(unit, port, vlan_flags, port_mode_flags);
++            /* EdgeNOS-4610: a single port's config must NOT abort the whole data
++             * plane. On the AS4610 the 10G SFP+ ports (and any unwired flex port)
++             * can reject their default mode (CDK_E_PARAM / CDK_E_PORT); without
++             * this, the loop poisons rv, skips every later port, and returns the
++             * error -> L2/STP never get set up (0/55). Treat per-port config as
++             * non-fatal: log and keep going so copper + the good ports come up. */
++            int prv = _config_port(unit, port, vlan_flags, port_mode_flags);
++            if (CDK_FAILURE(prv)) {
++                CDK_WARN(("bcm56340_a0_bmd_switching_init[%d]: port %d config "
++                          "rv=%d skipped (non-fatal)\n", unit, port, prv));
++            }
+         }
+     }
+ 
