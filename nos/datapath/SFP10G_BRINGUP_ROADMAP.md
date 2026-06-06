@@ -6,16 +6,24 @@ state, and the per-PHY config matches. The gap is the **port-level bring-up
 ORCHESTRATION** (order + a dynamic re-arm), which lives in the SDK's esw/port/phy
 layer — not in `phy84740.c` alone.
 
-## Source of truth
-The complete reference is the **open-source XGS-ROBO 6.4.1 SDK** (Broadcom
-source-available, same license family as OpenMDK/robo2):
-- Official: `github.com/Broadcom-Network-Switching-Software/OpenBCM`
-- Mirror w/ Helix4 (right era for BCM56340): `github.com/ariavie/bcm` → `sdk-xgs-robo-6.4.1/`
-It has our exact chip + all the pieces, coordinated:
-`src/soc/esw/helix4.c` (BCM56340), `src/bcm/esw/port.c` + `link.c` (port/link
-orchestration), `src/soc/phy/wc40.c` (Warpcore), `src/soc/phy/phy84740.c` (84758).
-Used as **reference** to implement in our BSD-3 `edged` (not redistributed) — same as
-how we used `phy84740.c`.
+## Source of truth — USE OFFICIAL OpenBCM (source-available), NOT the ariavie mirror
+**LICENSING (verified 2026-06-06):**
+- ✅ **`github.com/Broadcom-Network-Switching-Software/OpenBCM`** — official Broadcom,
+  **source-available** (`Legal/LICENSE`: "worldwide, non-exclusive, royalty-free,
+  perpetual license to use, reproduce, distribute … and create derivative works").
+  Same grant as robo2-xsdk/OpenMDK. Has `src/soc/phy/wc40*.c` (Warpcore),
+  `phy84740.c` (84758), `src/bcm/esw/port.c`+`link.c`, `src/soc/common/phyctrl.c`.
+  **This is what we may reference/port from.**
+- ❌ **`github.com/ariavie/bcm` → `sdk-xgs-robo-6.4.1/`** — a THIRD-PARTY mirror of the
+  **PROPRIETARY** Broadcom SDK. Per-file headers: "proprietary software … no license
+  unless you have an Authorized License." **NO open grant. Do NOT use/keep/redistribute
+  it.** (We cloned it once for analysis and deleted it.) It happened to still carry the
+  56340 `helix4.c`, but that file is just a thin wc40-fw registration (no port-up logic
+  — uses the TR3 path), so we lose nothing: the orchestration we need (port/link/phyctrl/
+  wc40/phy84740) is all in source-available OpenBCM.
+Our committed `phy84758-src/broadcom-official/phy84740.c` is from the source-available
+robo2-xsdk; edged work is grounded in OpenMDK (regs) + OpenBCM/robo2 (source-available)
++ our own 5610 decode — never the proprietary mirror.
 
 ## The cascaded-PHY model
 Each SFP+ port = two stacked PHY drivers glued by `soc_phyctrl_*`:
