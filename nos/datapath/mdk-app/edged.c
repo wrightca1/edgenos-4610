@@ -71,6 +71,7 @@ union i2c_smbus_data {
 #include <phy_config.h>
 #include <phy/phy.h>
 #include <phy/phy_drvlist.h>
+#include <phy/phy_aer_iblk.h>
 
 #include "linux_shbde.h"
 
@@ -1309,10 +1310,34 @@ main(int argc, char *argv[])
             }
             LOG("Warpcore-core loopback isolation on port %d (xe0):", p);
             if (wc && wc->drv->pd_loopback_set) {
-                int rc2 = PHY_LOOPBACK_SET(wc, 1);
+                /* WC_XGXSSTATUS (0x108001|AER_IBLK): bit11 = TX PLL lock.
+                 * WC_PCS_IEEESTATUS1 (0x030001|AER_IBLK): bit2 = RX link. */
+                uint32_t st = 0, pcs = 0, wcspd = 0;
+                int rc2, srge;
+                /* Is the Warpcore actually at 10G? RX_LINKSTATUS is PCS bit2; a 1G
+                 * COMBO link with no 10G PCS lock = Warpcore stuck in 1G/SGMII
+                 * (the 84758 speed_set never propagated 10G to it). Force it. */
+                PHY_SPEED_GET(wc, &wcspd);
+                LOG("    Warpcore speed_get = %d", (int)wcspd);
+                if (wcspd != 10000) {
+                    srge = PHY_SPEED_SET(wc, 10000);
+                    PHY_SPEED_GET(wc, &wcspd);
+                    LOG("    forced Warpcore -> 10G (rc=%d) now speed=%d", srge, (int)wcspd);
+                    { struct timespec ts = { .tv_sec = 1, .tv_nsec = 0 }; nanosleep(&ts, NULL); }
+                }
+                phy_aer_iblk_read(wc, 0x50108001, &st);
+                phy_aer_iblk_read(wc, 0x50030001, &pcs);
+                LOG("    pre-lpbk: XGXSSTATUS=%04x TXPLL_LOCK=%d  PCS_STAT1=%04x RXlink(b2)=%d",
+                    st & 0xffff, !!(st & (1u<<11)), pcs & 0xffff, !!(pcs & 0x4));
+                rc2 = PHY_LOOPBACK_SET(wc, 1);
                 { struct timespec ts = { .tv_sec = 2, .tv_nsec = 0 }; nanosleep(&ts, NULL); }
+                st = pcs = 0;
+                phy_aer_iblk_read(wc, 0x50108001, &st);
+                phy_aer_iblk_read(wc, 0x50030001, &pcs);
                 PHY_LINK_GET(wc, &pl, &pa);
-                LOG("    Warpcore internal loopback rc=%d -> Warpcore link=%d", rc2, pl);
+                LOG("    in-lpbk(rc=%d): XGXSSTATUS=%04x TXPLL_LOCK=%d  PCS_STAT1=%04x "
+                    "RXlink=%d  drv-link=%d", rc2, st&0xffff, !!(st&(1u<<11)),
+                    pcs&0xffff, !!(pcs&0x4), pl);
                 PHY_LOOPBACK_SET(wc, 0);
             } else {
                 LOG("    (no Warpcore phy_ctrl in chain)");

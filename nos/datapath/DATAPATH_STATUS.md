@@ -111,16 +111,26 @@ transmit — the 10G datapath failure is the **Warpcore core itself**, not the
 optics, fiber, partner, or 84758 (all of which are now verified good / fully
 configured).
 
-This is the **same fundamental Warpcore bring-up / per-lane RX-cal limitation the
-40G QSFP effort hit** (`project_qsfp_persist_and_eq`, `project_wc_fw_pause_protocol`
-— OpenMDK lacks the full SDK's `independent_lane_init`; that effort decoded a
-firmware-pause/host-cal handshake but did not fully crack the lane lock either). It
-is **not** reachable by register configuration from `edged`; closing it needs the
-full-SDK Warpcore lane bring-up (PLL/CDR + RX adaptation), which is a dedicated
-SerDes effort, not a datapath-config task. Everything up to the Warpcore — copper,
-L2, SFP+ MAC@10G, 84758 (speed/PCS/optical/laser per the open-source driver),
-module/optics — is done and verified. The 84758-side diagnostics + loopback
-isolation tooling are in `edged --up-check`.
+**Localized precisely (2026-06-07) by reading the Warpcore directly via
+`phy_aer_iblk_read`:**
+- Warpcore `speed_get = 10000` → it IS configured at 10G (not stuck in 1G).
+- `XGXSSTATUS` bit11 `TXPLL_LOCK = 1` → the Warpcore TX PLL is locked.
+- BUT `PCS_IEEESTATUS1` bit2 `RX_LINKSTATUS = 0` even with the Warpcore's **own
+  internal analog loopback** engaged (TX→RX inside the SerDes — no fiber/84758/
+  partner). (The `pd_link_get`-reports-`link=1` in loopback is the *1G COMBO*
+  status, not the 10G PCS — a red herring.)
+
+So the failure is exactly the **Warpcore 10G RX PCS/datapath not locking even on a
+pristine looped-back signal**, despite correct speed + PLL lock. This is the
+**OpenMDK Warpcore RX-datapath/adaptation gap** (same root as the 20G/QSFP work in
+`project_qsfp_persist_and_eq` / `project_wc_fw_pause_protocol`; OpenMDK lacks the
+full SDK's per-lane RX bring-up / `independent_lane_init`). It is **not** reachable
+by register config from `edged`. Everything up to it — copper, L2, SFP+ MAC@10G,
+84758 (speed/PCS/optical/laser per the open-source driver), modules/optics, the
+Warpcore PLL+speed — is done and verified. Diagnostic tooling (per-PHY link,
+Warpcore PLL/PCS reads, internal-loopback isolation) is in `edged --up-check`. The
+realistic path to close it is the **full Broadcom SDK datapath build** (OpenBCM/
+OpenNSL), which carries the Warpcore RX bring-up OpenMDK omits.
 
 ## OpenMDK changes
 
