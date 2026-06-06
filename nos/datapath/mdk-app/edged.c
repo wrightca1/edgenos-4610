@@ -1301,6 +1301,33 @@ main(int argc, char *argv[])
          * If the Warpcore PCS then locks, the SerDes core + PLL are good and the
          * gate is downstream (84758 retiming / fiber). If it stays down, the
          * Warpcore core/RX itself isn't locking — the deep RX-cal layer. */
+        /* Warpcore uC firmware liveness per SFP+ lane. OpenMDK downloads the WC40
+         * microcode ONLY via the core's lane-0 port (_warpcore_primary_lane); if the
+         * uC isn't running, the RX adaptation never executes -> PCS RX never locks
+         * even in loopback. CRCr(0x1081fe)!=0 and VERSIONr(0x1081f0)!=0 => uC alive;
+         * DOWNLOAD_STATUSr(0x10ffc5) bit0=INIT_DONE. Lane = PHY_CTRL_INST & 3. */
+        {
+            int xp;
+            LOG("Warpcore uC liveness (per SFP+ lane):");
+            for (xp = SFP_LO; xp <= SFP_HI; xp++) {
+                phy_ctrl_t *pc, *w = NULL;
+                uint32_t ver = 0, crc = 0, dls = 0;
+                int lane;
+                for (pc = BMD_PORT_PHY_CTRL(unit, xp); pc != NULL; pc = pc->next) {
+                    if (pc->drv && pc->drv->drv_name &&
+                        !strcmp(pc->drv->drv_name, "bcmi_warpcore_xgxs")) { w = pc; break; }
+                }
+                if (!w) { LOG("    port %d: no Warpcore in chain", xp); continue; }
+                lane = PHY_CTRL_INST(w) & 0x3;
+                phy_aer_iblk_read(w, 0x501081f0, &ver);   /* VERSIONr */
+                phy_aer_iblk_read(w, 0x501081fe, &crc);   /* CRCr */
+                phy_aer_iblk_read(w, 0x5010ffc5, &dls);   /* DOWNLOAD_STATUSr */
+                LOG("    port %d lane%d: uC version=0x%04x CRC=0x%04x dl_status=0x%04x "
+                    "INIT_DONE=%d  => uC %s", xp, lane, ver & 0xffff, crc & 0xffff,
+                    dls & 0xffff, !!(dls & 0x1),
+                    (crc & 0xffff) ? "ALIVE" : "NOT RUNNING");
+            }
+        }
         {
             int p = SFP_LO, pl = -2, pa = -2;
             phy_ctrl_t *pc, *wc = NULL;
