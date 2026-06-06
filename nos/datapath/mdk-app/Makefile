@@ -109,7 +109,9 @@ CPPFLAGS += -I$(CDK)/include -I$(BMD)/include -I$(PHY)/include -I$(CURDIR) -I$(L
 
 # Use CDK custom config file and system C library
 # (see cdk_custom_config.h for details)
-CPPFLAGS += -DCDK_INCLUDE_CUSTOM_CONFIG -DUSE_SYSTEM_LIBC -DBMD_CONFIG_INCLUDE_DMA=0 -DBMD_SYS_USLEEP=_usleep -DPHY_SYS_USLEEP=_usleep
+# DMA on: BMD packet RX/TX (bcm56340 bmd_rx/tx + xgsm_dma) needs coherent DMA memory,
+# supplied by edged_dma.c (edged_dma_alloc/free) over the OpenBCM kernel BDE.
+CPPFLAGS += -DCDK_INCLUDE_CUSTOM_CONFIG -DUSE_SYSTEM_LIBC -DBMD_CONFIG_INCLUDE_DMA=1 -DBMD_SYS_DMA_ALLOC_COHERENT=edged_dma_alloc -DBMD_SYS_DMA_FREE_COHERENT=edged_dma_free -DBMD_SYS_USLEEP=_usleep -DPHY_SYS_USLEEP=_usleep
 
 # Default application flags
 CFLAGS += -Wall -Werror
@@ -175,12 +177,14 @@ LIBBDE_BLIBS = $(addprefix $(LIBBDE_BLDDIR)/,$(LIBBDE_LIBS))
 #
 ################################################################################
 
-OBJS = linux-user.o linux_shbde.o
+# edged_dma.o: BMD's bmd_dma.c (in libbmd) now references edged_dma_alloc/free, so
+# both binaries must link it to resolve the BMD_SYS_DMA_* hooks.
+OBJS = linux-user.o linux_shbde.o edged_dma.o
 BOBJS = $(addprefix $(BLDDIR)/,$(OBJS))
 APPL = $(DSTDIR)/linux-user-mdk
 
 # EdgeNOS data-plane daemon (our code; reuses the BDE shim, no interactive shell)
-EOBJS = edged.o edged_l3.o linux_shbde.o
+EOBJS = edged.o edged_l3.o edged_dma.o linux_shbde.o
 BEOBJS = $(addprefix $(BLDDIR)/,$(EOBJS))
 EDGED = $(DSTDIR)/edged
 

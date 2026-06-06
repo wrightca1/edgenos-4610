@@ -76,6 +76,8 @@ union i2c_smbus_data {
 
 #include "linux_shbde.h"
 #include "edged_l3.h"
+#include <bmd/bmd_dma.h>          /* bmd_dma_alloc_coherent (coherent pool via BDE) */
+#include <bmdi/arch/xgsm_dma.h>   /* bmd_xgsm_dma_init (CMICm DMA channel setup) */
 
 /* AS4610-54T default: BCM56340 (Helix4) CMIC at on-die phys 0x48000000. */
 #define EDGED_DEFAULT_UNIT  "0x14e4:0xb340:0x01@0x48000000"
@@ -1347,6 +1349,8 @@ main(int argc, char *argv[])
             l3_conf = argv[i];
         } else if (!strcmp(argv[i], "--l3-show")) {
             l3_show_flag = 1;
+        } else if (!strcmp(argv[i], "--dma-test")) {
+            scan = 5;   /* exercise CPU<->chip DMA via the BDE coherent pool */
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
             usage(argv[0]); return 0;
         } else {
@@ -1861,6 +1865,82 @@ main(int argc, char *argv[])
     }
     if (l3_show_flag) {
         l3_show(unit);
+    }
+
+    /* --dma-test: validate the CPU punt path end to end. Inits the CMICm DMA
+     * channels, allocates a buffer from the kernel-BDE coherent pool (exercising
+     * edged_dma_alloc -> /dev/linux-user-bde), proves the uncached mapping is
+     * CPU-accessible, TXes a broadcast frame out a port, and briefly polls RX. */
+    if (scan == 5) {
+        dma_addr_t baddr = 0;
+        uint8_t *buf;
+        int drc, j;
+
+        LOG("--dma-test: bmd_xgsm_dma_init(unit) ...");
+        drc = bmd_xgsm_dma_init(unit);
+        LOG("--dma-test: dma_init rc=%d (%s)", drc, drc == 0 ? "OK" : CDK_ERRMSG(drc));
+
+        buf = bmd_dma_alloc_coherent(unit, 2048, &baddr);
+        if (buf == NULL) {
+            LOG("--dma-test: bmd_dma_alloc_coherent FAILED (BDE pool not available?)");
+        } else {
+            volatile uint8_t *vb = buf;
+            int ok = 1;
+            LOG("--dma-test: coherent buf virt=%p bus=0x%08x", (void *)buf, (uint32_t)baddr);
+            /* write a pattern + read it back: proves the uncached pool is mapped R/W */
+            for (j = 0; j < 256; j++) vb[j] = (uint8_t)(j ^ 0xa5);
+            for (j = 0; j < 256; j++) if (vb[j] != (uint8_t)(j ^ 0xa5)) { ok = 0; break; }
+            LOG("--dma-test: pool R/W verify %s", ok ? "PASS" : "FAIL");
+
+            /* Build a 64-byte broadcast test frame and TX it out the first front
+             * port that is up (proves CPU->chip TX DMA pushes a frame to the wire). */
+            {
+                static const uint8_t bcast[6] = {0xff,0xff,0xff,0xff,0xff,0xff};
+                static const uint8_t smac[6]  = {0x00,0x11,0x22,0x33,0x44,0x55};
+                bmd_pkt_t pkt;
+                int tport = (n_front > 0) ? front_ports[0] : 1;
+                memset(buf, 0, 64);
+                memcpy(buf, bcast, 6);
+                memcpy(buf + 6, smac, 6);
+                buf[12] = 0x08; buf[13] = 0x00;     /* ethertype IPv4 (dummy) */
+                for (j = 14; j < 64; j++) buf[j] = (uint8_t)j;
+                memset(&pkt, 0, sizeof(pkt));
+                pkt.port  = tport;
+                pkt.data  = buf;
+                pkt.size  = 64;
+                pkt.baddr = baddr;
+                drc = bmd_tx(unit, &pkt);
+                LOG("--dma-test: bmd_tx 64B bcast out port %d rc=%d (%s)",
+                    tport, drc, drc == 0 ? "SENT" : CDK_ERRMSG(drc));
+            }
+            bmd_dma_free_coherent(unit, 2048, buf, baddr);
+        }
+
+        /* Best-effort RX: submit a buffer + poll briefly. Without trap rules few
+         * frames punt yet; a non-timeout return proves the RX DMA completion path. */
+        {
+            dma_addr_t rbaddr = 0;
+            uint8_t *rbuf = bmd_dma_alloc_coherent(unit, 2048, &rbaddr);
+            if (rbuf) {
+                bmd_pkt_t rpkt, *rp = NULL;
+                int rrc;
+                memset(&rpkt, 0, sizeof(rpkt));
+                rpkt.data = rbuf; rpkt.size = 2048; rpkt.baddr = rbaddr;
+                bmd_rx_start(unit, &rpkt);
+                LOG("--dma-test: RX submitted, polling 2s ...");
+                for (j = 0; j < 200; j++) {
+                    rrc = bmd_rx_poll(unit, &rp);
+                    if (rrc == 0 && rp) {
+                        LOG("--dma-test: RX got %d bytes on src_port %d", rp->size, rp->port);
+                        break;
+                    }
+                    { struct timespec ts = { .tv_sec = 0, .tv_nsec = 10*1000*1000 }; nanosleep(&ts, NULL); }
+                }
+                if (j >= 200) LOG("--dma-test: no RX in 2s (expected w/o trap rules; TX path is the key result)");
+                bmd_rx_stop(unit);
+                bmd_dma_free_coherent(unit, 2048, rbuf, rbaddr);
+            }
+        }
     }
 
     if (keep) {
