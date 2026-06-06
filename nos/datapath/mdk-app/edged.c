@@ -808,6 +808,12 @@ copper_up(int unit)
 #define X84_RXLOS_LVL   (1u << 9)
 #define X84_MODABS_LVL  (1u << 8)
 #define X84_MOD_PRESENCE (1u << 3)
+#define X84_SIDE_SEL    0xffff   /* 1.0xffff b0: 0=MMF/line(optics), 1=XFI/system */
+#define X84_CHIP_MODE   0xc805   /* PMAD_CHIP_MODE: b3=DAC, b2=backplane (clear both=optical SR/LR) */
+#define X84_DAC_MODE    (1u << 3)
+#define X84_BKPLANE_MODE (1u << 2)
+#define X84_REPEATER_DET 0xc81d  /* (b1|b2)=0x6 => repeater/retimer mode */
+#define X84_SQUELCH_CTL 0xcd18   /* devad 3 (PCS): RX squelch enable per speed */
 
 /* Port the robo2-xsdk phy84740 optical bring-up + enable_set for each SFP+ (xe0-3
  * at EBUS2 0x80-0x83). OpenMDK's bcm84740 driver sets the c8e4 override but NEVER
@@ -826,6 +832,22 @@ sfp_tx_enable(int unit)
         uint32_t addr = CDK_XGSM_MIIM_EBUS(2) | s;
         uint32_t v = 0;
         cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_AER_ADDR, 0);  /* lane 0 */
+
+        /* (0-pre-a) Force MMF/LINE side: 1.0xffff b0 = 0. The 84758 side-latch is
+         * stateful; if it was left at XFI(=1) our media (1.0007/c8e4/c800/cd17)
+         * writes would land on the SYSTEM side and the optical PMD never configures
+         * -> sd=0. (robo2 PHY84740_MMF.) */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_SIDE_SEL, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_SIDE_SEL, v & ~0x1u);
+
+        /* (0-pre-b) Select the OPTICAL front-end: clear DAC (b3) + backplane (b2)
+         * in 1.0xc805 (PMAD_CHIP_MODE). robo2 phy_84740_init does this for SR/LR;
+         * if the PMD is left in DAC/copper mode it never locks on optical light, so
+         * signal-detect stays 0 with the fiber lit. This is the fiber-media select
+         * that the SDK's phy_fiber_pref=1 ultimately produces. */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_CHIP_MODE, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_CHIP_MODE,
+                            v & ~(X84_DAC_MODE | X84_BKPLANE_MODE));
 
         /* (0) Set the 84758 PMA to 10G (robo2 phy_84740_speed_set). OpenMDK loads
          * the ucode but NEVER configures the speed, so the media datapath never
@@ -873,6 +895,21 @@ sfp_tx_enable(int unit)
             cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_SIGLVL,
                                 (c800 & (1u << 7)) ? (c800 & ~(1u << 7))
                                                    : (c800 | (1u << 7)));
+        }
+
+        /* (5) Squelch-enable: if the 84758 is in repeater/retimer mode
+         * (1.0xc81d b1|b2 = 0x6), un-squelch the media->system datapath via the
+         * SYSTEM-side PCS reg 3.0xcd18 (10G => bit4 RX + bit6 enable = 0x50), so the
+         * locked media RX is repeated to the Warpcore. robo2 _phy_84740_squelch_enable.
+         * (Without this, even a locked media side won't reach the Warpcore.) */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_REPEATER_DET, &v);
+        if ((v & 0x6) == 0x6) {
+            uint32_t sq = 0;
+            cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_SIDE_SEL, 1); /* XFI/system */
+            cdk_xgsm_miim_read(unit, addr, (3 << 16) | X84_SQUELCH_CTL, &sq);
+            cdk_xgsm_miim_write(unit, addr, (3 << 16) | X84_SQUELCH_CTL,
+                                sq | (1u << 4) | (1u << 6));
+            cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_SIDE_SEL, 0); /* back to MMF */
         }
     }
 }
@@ -1156,6 +1193,9 @@ main(int argc, char *argv[])
          * 10G. (try_10g no longer needed — kept as a no-op escape hatch.) */
         if (1) {
             (void)try_10g;
+            /* XFI is correct for the external-84758 system side. (Tried SFI/fw_mode=2
+             * 2026-06-06: no change — the blocker is upstream, the 84758 media PMD
+             * not locking the fiber (sd=0), not the Warpcore interface mode.) */
             static const struct { bmd_port_mode_t m; const char *n; } x10g[] = {
                 { bmdPortMode10000XFI, "XFI" }, { bmdPortMode10000SFI, "SFI" },
                 { bmdPortMode10000fd,  "fd"  }, { bmdPortMode10000KR,  "KR" },
@@ -1284,6 +1324,16 @@ main(int argc, char *argv[])
                 cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0001, &pcs_st);
                 cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0001, &pcs_st); /* 2nd read */
                 cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0020, &blk);    /* 10GBASE-R PCS b0=blocklock */
+                {   /* media-side config readback: side-latch, optical/DAC mode, repeater */
+                    uint32_t side=0, cmode=0, rep=0;
+                    cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_SIDE_SEL,   &side);
+                    cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_CHIP_MODE,  &cmode);
+                    cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_REPEATER_DET,&rep);
+                    LOG("  xe%d media: side(ffff)=%04x(%s) chipmode(c805)=%04x(DAC=%d bkpln=%d) "
+                        "repeater(c81d)=%04x(%s)", s, side&0xffff, (side&1)?"XFI/sys":"MMF/line",
+                        cmode&0xffff, !!(cmode&X84_DAC_MODE), !!(cmode&X84_BKPLANE_MODE),
+                        rep&0xffff, ((rep&0x6)==0x6)?"repeater":"non-rep");
+                }
                 LOG("  xe%d(0x%02x) cfg[1.0=%04x 1.7=%04x c820=%04x spd=%s] "
                     "PMD[st1=%04x st2=%04x sd=%04x LA=%d] PCS[st1=%04x st2=%04x "
                     "blklk=%04x LA=%d]%s", s, addr,
