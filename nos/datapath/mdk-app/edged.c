@@ -898,17 +898,21 @@ sfp_tx_enable(int unit)
          * off (sd=0) and stops 10GBASE-R block-lock. (robo2 phy_84740_init.) */
         cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_RESET_CTRL, 0);
 
-        /* (1) OPTICAL_CFG override + MOD_PRESENCE (ignore the pins, drive present). */
-        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &v);
-        v |= (X84_RXLOS_OVERRIDE | X84_MODABS_OVERRIDE | X84_MOD_PRESENCE);
-        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_CFG, v);
+        /* (1) OPTICAL_CFG = the exact ICOS LOCKED-state value 0xc8ef (RXLOS+MOD_ABS
+         * override on, MOD_PRESENCE, lane-power on b4=0, TxOn b12=0). Captured from
+         * a locked ICOS 84758 (2026-06-06, dumps/icos_linked_2026_06_06/21_*). */
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_CFG, 0xc8ef);
 
-        /* (2) OPTICAL_SIG_LVL: set RXLOS_LVL (b9) + MOD_ABS_LVL (b8) so the
-         * overridden RX_LOS/MOD_ABS resolve to "signal present / module present".
-         * THIS is what OpenMDK omits and why sigdet stayed 0. */
-        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_SIGLVL, &v);
-        v |= (X84_RXLOS_LVL | X84_MODABS_LVL);
-        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_SIGLVL, v);
+        /* (2) OPTICAL_SIG_LVL = the exact ICOS LOCKED value 0x3f3f. THE FIX: edged
+         * previously set only RXLOS_LVL(b9)+MOD_ABS_LVL(b8) = 0x300, but ICOS also
+         * programs the full RX_LOS/signal-level THRESHOLD fields (b0-5, b10-13).
+         * Without those thresholds the media RX never declares signal-detect, so
+         * 1.000a sd stayed 0 and the 10GBASE-R PCS never block-locked. With 0x3f3f a
+         * locked ICOS reads 1.000a=1 / 3.0020 block-lock=1. */
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_SIGLVL, 0x3f3f);
+
+        /* (2b) c82b = ICOS locked value 0x8a40 (edged previously left this default). */
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0xc82b, 0x8a40);
 
         /* (3) Clear PMD global TX-disable (1.0009 b0) + GENSIG TX-disable (1.cd16 b3). */
         cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_TX_DISABLE, &v);
@@ -1358,15 +1362,19 @@ main(int argc, char *argv[])
                 cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0001, &pcs_st);
                 cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0001, &pcs_st); /* 2nd read */
                 cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0020, &blk);    /* 10GBASE-R PCS b0=blocklock */
-                {   /* media-side config readback: side-latch, optical/DAC mode, repeater */
-                    uint32_t side=0, cmode=0, rep=0;
+                {   /* media-side config readback: vs ICOS locked (c800=3f3f c8e4=c8ef c82b=8a40 000a=1) */
+                    uint32_t side=0, cmode=0, rep=0, c800=0, c8e4=0, c82b=0, sd=0;
                     cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_SIDE_SEL,   &side);
                     cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_CHIP_MODE,  &cmode);
                     cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_REPEATER_DET,&rep);
-                    LOG("  xe%d media: side(ffff)=%04x(%s) chipmode(c805)=%04x(DAC=%d bkpln=%d) "
-                        "repeater(c81d)=%04x(%s)", s, side&0xffff, (side&1)?"XFI/sys":"MMF/line",
-                        cmode&0xffff, !!(cmode&X84_DAC_MODE), !!(cmode&X84_BKPLANE_MODE),
-                        rep&0xffff, ((rep&0x6)==0x6)?"repeater":"non-rep");
+                    cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_SIGLVL, &c800);
+                    cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG,    &c8e4);
+                    cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0xc82b,         &c82b);
+                    cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x000a,         &sd);
+                    LOG("  xe%d media: side=%04x(%s) c805=%04x c800=%04x c8e4=%04x c82b=%04x 000a=%04x"
+                        " [ICOS locked: c800=3f3f c8e4=c8ef c82b=8a40 000a=0001]",
+                        s, side&0xffff, (side&1)?"XFI":"MMF", cmode&0xffff,
+                        c800&0xffff, c8e4&0xffff, c82b&0xffff, sd&0xffff);
                 }
                 LOG("  xe%d(0x%02x) cfg[1.0=%04x 1.7=%04x c820=%04x spd=%s] "
                     "PMD[st1=%04x st2=%04x sd=%04x LA=%d] PCS[st1=%04x st2=%04x "
