@@ -1,0 +1,16 @@
+
+##### CMD: listmem xe #####
+listmem xe
+LISTmem: WARNING: excess arguments ignored beginning with 'xe'
+BCM.0> 
+BCM.0> 
+##### CMD: listmem port #####
+listmem port
+LISTmem: WARNING: excess arguments ignored beginning with 'port'
+BCM.0> 
+BCM.0> 
+##### CMD: getreg xlport_xgxs0_ctrl_reg.xe0 #####
+getreg xlport_xgxs0_ctrl_reg.xe0
+Syntax error parsing "xlport_xgxs0_ctrl_reg.xe0"
+BCM.0> 
+BCM.0> 

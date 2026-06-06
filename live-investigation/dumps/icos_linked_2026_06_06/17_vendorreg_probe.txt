@@ -1,0 +1,19 @@
+
+##### CMD: phy xe0 1.0xc8e4 #####
+phy xe0 1.0xc8e4
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 0x1.0xc800 #####
+phy xe0 0x1.0xc800
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 sgmii #####
+phy xe0 sgmii
+BCM.0> 
+BCM.0> 
+##### CMD: port xe0 #####
+port xe0
+PORT: Status (* indicates PHY link up)
+ *xe0     (EnabledLS(SW Forced((10GFD) Stad(04:f8:f8:15:a8:41) STP(Forward) Lrn(ARL,FWD) UtPri(0) Pfm(FloodNone) IF(XGMII) PH(Slave) Max_frame(1518) MDIX(ForcedNormal, Normal) Medium(None) VLANFILTER(2) Mac driver(XMAC Driver)
+BCM.0> 
+BCM.0> 

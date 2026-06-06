@@ -1,0 +1,20 @@
+
+##### CMD: externaltuningsum #####
+externaltuningsum
+Running external memory tuning on all interfaces. Test count = 10.
+BCM.0> 
+BCM.0> 
+##### CMD: externaltuning xe0 #####
+externaltuning xe0
+EXTernalTuning: WARNING: excess arguments ignored beginning with 'xe0'
+BCM.0> 
+BCM.0> 
+##### CMD: phy diag xe0 config #####
+phy diag xe0 config
+BCM.0> 
+BCM.0> 
+##### CMD: phy diag xe0 state 3 #####
+phy diag xe0 state 3
+Test should be : 1 (STATE_TRACE1), 2 (STATE_TRACE2), 3 (WHERE_AM_I), 4 (TEMP)
+BCM.0> 
+BCM.0> 

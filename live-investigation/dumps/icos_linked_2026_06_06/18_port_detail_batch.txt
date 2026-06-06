@@ -1,0 +1,86 @@
+
+##### CMD: port xe1 #####
+port xe1
+PORT: Status (* indicates PHY link up)
+ *xe1     (EnabledLS(SW Forced((10GFD) Stad(04:f8:f8:15:a8:41) STP(Block) Lrn(ARL,FWD) UtPri(0) Pfm(FloodNone) IF(XGMII) PH(Slave) Max_frame(1518) MDIX(ForcedNormal, Normal) Medium(None) VLANFILTER(2) Mac driver(XMAC Driver)
+BCM.0> 
+BCM.0> 
+##### CMD: port xe4 #####
+port xe4
+PORT: Status (* indicates PHY link up)
+  xe4     (EnabledLS(SW Forced((20GFD) Stad(04:f8:f8:15:a8:41) STP(Disable) Lrn(disc) UtPri(0) Pfm(FloodNone) IF(XGMII) Max_frame(1518) MDIX(ForcedNormal, Normal) Medium(Fiber) Fault(Local) VLANFILTER(2) Mac driver(XMAC Driver)
+BCM.0> 
+BCM.0> 
+##### CMD: port ge25 #####
+port ge25
+PORT: Status (* indicates PHY link up)
+ *ge25    (EnabledLS(SW Auto((1GFD) Ability (fd = 10MB,100MB,1000MB hd =  intf = sgmii medium = copper pause = pause_tx,pause_rx,pause_asymm lb = none,MAC,PHY flags = autoneg )Local (fd = 10MB,100MB,1000MB hd =  intf = medium =  pause =  lb =  flags =  )Remote (fd = 10MB,100MB,1000MB hd =  intf =  medium =  pause =  lb =  flags =  )Stad(04:f8:f8:15:a8:41) STP(Forward) Lrn(ARL,FWD) UtPri(0) Pfm(FloodNone) IF(SGMII) PH(Auto) Max_frame(1518) MDIX(Auto, Normal) Medium(Copper) VLANFILTER(2) Mac driver(XMAC Driver)
+BCM.0> 
+BCM.0> 
+##### CMD: linkscan #####
+linkscan
+LINKscan: Linkscan enabled
+LINKscan:   Software polling interval: 250000 usec
+LINKscan:   Software Port BitMap 0x00000000000000000000000000000000000000000000000000fffffffffffffe: ge,xe
+LINKscan:   Hardware Port BitMap 0x0000000000000000000000000000000000000000000000000000000000000000: none
+LINKscan:   Disabled Port BitMap 0x0000000000000000000000000000000000000000000000000000000000000000: none
+BCM.0> 
+BCM.0> 
+##### CMD: phy ge25 #####
+phy ge25
+Port ge25 (PHY addr 0x22): BCM54282 (542XX Gigabit PHY Driver)
+	0x00: 0x1140	0x01: 0x79ed	0x02: 0x600d	0x03: 0x845b
+	0x04: 0x0141	0x05: 0xc141	0x06: 0x006d	0x07: 0x2001
+	0x08: 0x4c01	0x09: 0x0600	0x0a: 0x3800	0x0b: 0x0000
+	0x0c: 0x0000	0x0d: 0x4007	0x0e: 0x0000	0x0f: 0x3000
+	0x10: 0x0001	0x11: 0x0f00	0x12: 0x0000	0x13: 0x0000
+	0x14: 0x0101	0x15: 0x871c	0x16: 0x043e	0x17: 0x0f7e
+	0x18: 0x8800	0x19: 0x2131	0x1a: 0x0009	0x1b: 0x0000
+	0x1c: 0x083d	0x1d: 0x0000	0x1e: 0x0001	0x1f: 0x0f00
+BCM.0> 
+BCM.0> 
+##### CMD: phy diag xe2 dsc #####
+phy diag xe2 dsc
+
+
+DSC parameters for port 52
+
+PLL Range: 234
+
+LN  PPM PPM_XFR clk90_ofs PF SL_TRGT VGA BIAS DFE1 DFE2 DFE3 DFE4 DFE5 PREC MAIN POSTC MTRC PE   ZE   ME  PO  ZO  MO
+00 0001 0000000 000000036 0000 0150 0036 100% 0000 0000 0000 0000 0000 0000 0055 0008  -1024 0000 0015 -9   0 -11 14
+01 0001 0000000 000000036 0001 0150 0036 100% 0000 0000 0000 0000 0000 0000 0055 0008  -1024 0000 -015 -11   0 -15 15
+02 0001 0000000 000000036 0001 0150 0036 100% 0000 0000 0000 0000 0000 0000 0055 0008  -1024 0000 -015 15   0  15  1
+03 0001 0000000 000000036 0001 0150 0036 100% 0000 0000 0000 0000 0000 0000 0055 0008  -1024 0000 0013 -15   0  15 13
+BCM.0> 
+BCM.0> 
+##### CMD: phy diag xe3 dsc #####
+phy diag xe3 dsc
+
+
+DSC parameters for port 53
+
+PLL Range: 234
+
+LN  PPM PPM_XFR clk90_ofs PF SL_TRGT VGA BIAS DFE1 DFE2 DFE3 DFE4 DFE5 PREC MAIN POSTC MTRC PE   ZE   ME  PO  ZO  MO
+00 0001 0000000 000000036 0000 0150 0036 100% 0000 0000 0000 0000 0000 0000 0055 0008  -1024 0000 0015 -9   0 -11 14
+01 0000 0000000 000000036 0001 0150 0036 100% 0000 0000 0000 0000 0000 0000 0055 0008  -1024 0000 -015 -11   0 -15 15
+02 0002 0000000 000000036 0001 0150 0036 100% 0000 0000 0000 0000 0000 0000 0055 0008  -1024 0000 -015 15   0  15  1
+03 0001 0000000 000000036 0001 0150 0036 100% 0000 0000 0000 0000 0000 0000 0055 0008  -1024 0000 0013 -15   0  15 13
+BCM.0> 
+BCM.0> 
+##### CMD: phy diag xe5 dsc #####
+phy diag xe5 dsc
+
+
+DSC parameters for port 55
+
+PLL Range: 64
+
+LN  PPM PPM_XFR clk90_ofs PF SL_TRGT VGA BIAS DFE1 DFE2 DFE3 DFE4 DFE5 PREC MAIN POSTC MTRC PE   ZE   ME  PO  ZO  MO
+00 0000 0000000 000000032 0010 0150 0047 100% 0000 0000 0000 0000 0000 0000 0000 0000  0000 0000 0000  0   0   0  0
+01 0000 0000000 000000032 0010 0150 0047 100% 0000 0000 0000 0000 0000 0000 0000 0000  0000 0000 0000  0   0   0  0
+02 0000 0000000 000000032 0010 0150 0047 100% 0000 0000 0000 0000 0000 0000 0000 0000  0000 0000 0000  0   0   0  0
+03 0000 0000000 000000032 0010 0150 0047 100% 0000 0000 0000 0000 0000 0000 0000 0000  0000 0000 0000  0   0   0  0
+BCM.0> 
+BCM.0> 

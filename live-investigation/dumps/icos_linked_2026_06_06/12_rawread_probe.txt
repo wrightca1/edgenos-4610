@@ -1,0 +1,18 @@
+
+##### CMD: phy raw xe0 1 0xca1c #####
+phy raw xe0 1 0xca1c
+BCM.0> 
+BCM.0> 
+##### CMD: phy raw xe0 0x1 0xc8e4 #####
+phy raw xe0 0x1 0xc8e4
+BCM.0> 
+BCM.0> 
+##### CMD: phy raw xe0 0x1 0xc800 #####
+phy raw xe0 0x1 0xc800
+BCM.0> 
+BCM.0> 
+##### CMD: listreg XLPORT_XGXS0_CTRL_REG #####
+listreg XLPORT_XGXS0_CTRL_REG
+Listreg: WARNING: excess arguments ignored beginning with 'XLPORT_XGXS0_CTRL_REG'
+BCM.0> 
+BCM.0> 

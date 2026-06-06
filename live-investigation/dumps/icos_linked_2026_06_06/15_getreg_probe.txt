@@ -1,0 +1,16 @@
+
+##### CMD: getreg xlport_xgxs0_ctrl_reg #####
+getreg xlport_xgxs0_ctrl_reg
+Syntax error parsing "xlport_xgxs0_ctrl_reg"
+BCM.0> 
+BCM.0> 
+##### CMD: getreg xlport_mac_ctrl #####
+getreg xlport_mac_ctrl
+Syntax error parsing "xlport_mac_ctrl"
+BCM.0> 
+BCM.0> 
+##### CMD: d xlport_xgxs0_ctrl_reg #####
+d xlport_xgxs0_ctrl_reg
+Unknown option or memory to dump (use 'help dump' for more info)
+BCM.0> 
+BCM.0> 

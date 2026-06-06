@@ -1,0 +1,5 @@
+
+BCM.0> 
+BCM.0> [echo-verified=True] sending CR
+
+=== ENDED (3s) ===

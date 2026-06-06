@@ -1,0 +1,68 @@
+
+##### CMD: ? #####
+?
+help: "??" or "help" for summary
+Commands common to all modes:
+?              ??             ASSert         Attach         BackGround     
+break          BroadSync      CASE           CD             ClearScreen    
+CONFig         CONSole        CoPy           CPUDB          CTEcho         
+CTInstall      CTSetup        DATE           DBDump         DBParse        
+DeBug          DELAY          DEVice         DIR            DISPatch       
+Echo           EDline         EXIT           EXPR           FLASHINIT      
+FLASHSYNC      FOR            Help           HISTory        IF             
+IPROCRead      IPROCWrite     JOBS           KILL           LED            
+LOCal          LOG            LOOP           LS             MCSCmd         
+MCSDump        MCSLoad        MCSMsg         MCSStatus      MCSTimeStamp   
+MKDIR          MORe           MoVe           NOEcho         Pause          
+PortMod        PRINTENV       PROBE          PSCAN          PWD            
+QUIT           RCCache        RCLoad         REBOOT         REName         
+RESET          RM             RMDIR          RPC            SAVE           
+SET            SETENV         SHell          SLeep          TIME           
+Version        
+Commands for current mode:
+ADC            AGE            Attach         Auth           BaseBoard      
+BIST           BPDU           BTiMeout       BUFfer         CABLEdiag      
+CACHE          CHecK          CLEAR          CLOCKS         COLOR          
+COMBO          COS            CounTeR        CustomSTAT     DAC            
+DELete         DETach         DMA            DmaRomTest     DMIRror        
+DPLL           DSCP           DTAG           Dump           EditReg        
+EGRess         EthernetAV     EXTernalTuning EXTernalTuning2EXTernalTuningSum
+FieldProcessor FLEXport       Getreg         GPORT          H2HIGIG        
+H2HIGIG2       HASH           HashDestinationHClksel        HeaderMode     
+HSP            I2C            IbodSync       INIT           Insert         
+INTR           IPFIX          IPG            IPMC           L2             
+L2MODE         L3             LCDMSG         LINKscan       LISTmem        
+Listreg        LLS            LOOKup         MCAST          MemFirst       
+MemNext        MemSCAN        MemWatch       MIM            MIRror         
+MODify         ModMap         Modreg         MPLS           MSPI           
+MTiMeout       MultiCast      MUXsel         NVram          OAM            
+PacketWatcher  PBMP           PCIE           PHY            POE            
+POESel         POP            PORT           PortRate       PortSampRate   
+PortStat       PPDclk         PROBE          PUSH           PUTREG         
+PVlan          RATE           RateBw         RegCMp         RegWatch       
+REMove         ResTest        RXCfg          RXInit         RXMon          
+SCHan          SEArch         SER            Setreg         SHOW           
+SOC            SRAM           SramSCAN       STACKMode      StackPortGet   
+StackPortSet   STG            STiMeout       STKMode        StkTask        
+SW_AN          SwitchControl  SYnth          SystemSnake    TCAM           
+TeCHSupport    TEMPerature    TestClear      TestList       TestMode       
+TestParameters TestRun        TestSelect     TRUNK          TX             
+TXBeacon       TXCount        TXSTArt        TXSTOp         VLAN           
+WARMBOOT       WLAN           Write          XAUI           XClocks        
+XPoe           
+BCM.0> 
+##### CMD: help phy #####
+help phy
+Help: WARNING: excess arguments ignored beginning with 'phy'
+BCM.0> 
+BCM.0> 
+##### CMD: help dump #####
+help dump
+Help: WARNING: excess arguments ignored beginning with 'dump'
+BCM.0> 
+BCM.0> 
+##### CMD: help getreg #####
+help getreg
+Help: WARNING: excess arguments ignored beginning with 'getreg'
+BCM.0> 
+BCM.0> 

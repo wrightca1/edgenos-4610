@@ -60,6 +60,7 @@ def main():
     if "BCM.0>" in cur:
         # already inside the diag shell -> just use it
         drain(0.8)
+        send("", "BCM.0>", 5)                    # warm-up: absorb first-command race
         for c in cmds:
             sys.stdout.write("\n##### CMD: %s #####\n" % c)
             sys.stdout.write(send(c, "BCM.0>", 60)); sys.stdout.flush()

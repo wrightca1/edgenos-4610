@@ -83,3 +83,29 @@ to edged's unlocked `../edged_upcheck_unlocked_baseline_2026_06_06.txt`.
   sacrificial leading CR** to stop the console dropping the first char, and is
   state-aware (detects if already in `BCM.0>`).
 - Login: ICOS `admin`/blank → `enable`/blank; bcmsh needs a `y` confirm (blocks mgmt).
+
+## Capture index (this directory)
+| File | Contents |
+|---|---|
+| `00_discovery.txt` | `version` (SDK chips/PHYs), `ps` (all port status — xe0/xe1 up 10G) |
+| `04_dsc_locked.txt` | Warpcore DSC for xe0/xe1 (linked) + xe2 (down) — identical |
+| `05_miim_syntax_test.txt` | `phy xe0` full 84758 MMD register dump (locked) |
+| `09_config_show.txt` | **full SDK `config show`** — the fiber_pref/automedium/4x10 leads |
+| `10_cmd_list.txt` | full bcmsh command set (`?`) |
+| `13_phy_serdes_full.txt` | `soc` chip info + `phy xe0..xe5` + DSC xe0/xe1/xe4 |
+| `18_port_detail_batch.txt` | `port xe1/xe4/ge25`, `linkscan`, `phy ge25`, DSC xe2/xe3/xe5 |
+| `06/07_*trace*` | BSL-trace attempts (dead-end: not console-routed) |
+| `11,12,14,15,16,17_*` | syntax probes (externaltuning=DDR; getreg/dump/raw-read/techsupport syntax not cracked) |
+
+Extra observations: linked `xe0/xe1` report `Medium(None)`, down `xe4` reports
+`Medium(Fiber) Fault(Local)`; `linkscan` = SW poll 250ms over ge+xe; `phy xe4`
+(Warpcore base block) regs `0x10=0x20f0 0x12/0x13=0x1212 0x1f=0x81d0`.
+
+## bcmsh diag syntax — learned vs not cracked (for next session)
+**Works:** `phy info`, `ps`, `version`, `soc`, `config show`, `phy <port>` (std MMD
+dump), `phy diag <port> dsc`, `port <port>`, `linkscan`. **Not cracked (no output /
+syntax error over serial):** `getreg`/`setreg <name>` (name/index format), `dump`/`d`
+/`listmem`/`listreg` (need exact memory names — "use 'help dump'"), single PHY-register
+read (`phy <port> <dev>.<reg>`, `phy raw …` all silent), `phy diag <port>
+eyescan/state/link/config`, `techsupport` (no output as typed). Cracking `getreg`/`dump`
+memory names would unlock chip-side XLPORT/XMAC/PCS register dumps next time.

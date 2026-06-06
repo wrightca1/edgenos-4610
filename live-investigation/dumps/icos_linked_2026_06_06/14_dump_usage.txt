@@ -1,0 +1,14 @@
+
+##### CMD: getreg #####
+gereg
+Unknown command: gereg
+BCM.0> 
+BCM.0> 
+##### CMD: dump #####
+dump
+BCM.0> 
+BCM.0> 
+##### CMD: listmem #####
+listmem
+BCM.0> 
+BCM.0> 
