@@ -1087,6 +1087,103 @@ sfp_edc_reacquire(int unit)
     }
 }
 
+/* The 84758 8051 microcode, linked in via the OpenMDK patch (bcm84758_ucode.c). */
+extern unsigned char bcm84758_ucode[];
+extern unsigned int  bcm84758_ucode_len;
+
+/* Re-download the 84758 ucode over the MDIO mailbox (robo2 _phy84740_mdio_firmware_
+ * download, quad-port path): prep SPA_CTRL(0xc848)+MISC_CTRL1(0xca85), MII-reset to
+ * start the uC bootloader, then feed the image word-by-word through M8051_MSGIN
+ * (1.0xca12); the bootloader writes the checksum to 1.0xca1c (expect 0x600d).
+ * Returns the checksum. */
+static uint32_t
+sfp_84758_dl_ucode(int unit, uint32_t addr)
+{
+    unsigned int j, n = bcm84758_ucode_len;
+    uint32_t v = 0;
+    struct timespec ms10 = { .tv_sec = 0, .tv_nsec = 10*1000*1000 };
+    struct timespec us200 = { .tv_sec = 0, .tv_nsec = 200*1000 };
+    /* SPA_CTRL: clear b15(SPI-ROM-dl) + b13(dl-done), set b14(RAM boot) -> MDIO-to-RAM */
+    cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0xc848, &v);
+    cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0xc848,
+                        (v & ~((1u << 15) | (1u << 13))) | (1u << 14));
+    /* MISC_CTRL1 b3 = 1: 32K download size */
+    cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0xca85, &v);
+    cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0xca85, v | (1u << 3));
+    /* MII reset -> start M8051 bootloader */
+    cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0x0000, 0x8000);
+    nanosleep(&ms10, NULL);
+    /* MSGIN: SRAM start address, word count, then the image words */
+    cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0xca12, 0x8000);
+    cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0xca12, n / 2);
+    for (j = 0; j + 1 < n; j += 2) {
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0xca12,
+                            ((uint32_t)bcm84758_ucode[j] << 8) | bcm84758_ucode[j + 1]);
+    }
+    nanosleep(&us200, NULL);
+    cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0xca13, &v);   /* MSGOUT done handshake */
+    cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x9003, &v);   /* clear LASI */
+    nanosleep(&us200, NULL);
+    cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0xca13, &v);
+    cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0xca1c, &v);   /* checksum */
+    return v & 0xffff;
+}
+
+/* WHOLESALE 84758 re-init in robo2's complete order (the last 10G lead): fresh PMA
+ * soft-reset -> re-download ucode -> apply config in order -> enable. The theory:
+ * edged's piecemeal config on top of OpenMDK's partial init left the media-RX uC in
+ * a state where it never acquires; a full fresh init may fix it. Per SFP+ port (quad). */
+static void
+sfp_full_reinit(int unit)
+{
+    int s;
+    struct timespec ms12 = { .tv_sec = 0, .tv_nsec = 12*1000*1000 };
+    LOG("SFP+ 84758 WHOLESALE re-init (chip-mode->L2P->reset+re-ucode->config->enable):");
+    for (s = 0; s < 4; s++) {
+        uint32_t addr = CDK_XGSM_MIIM_EBUS(2) | s, v = 0, cs;
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_AER_ADDR, 0);
+        /* MMF/line side + optical chip-mode + L2P map (BEFORE the reset, robo2 order) */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_SIDE_SEL, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_SIDE_SEL, v & ~0x1u);
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_CHIP_MODE, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_CHIP_MODE,
+                            v & ~(X84_DAC_MODE | X84_BKPLANE_MODE));
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0xc701, 0x3210);   /* L2P lane map */
+        /* fresh reset + re-download ucode */
+        cs = sfp_84758_dl_ucode(unit, addr);
+        if (s == 0) LOG("    xe0 re-ucode checksum = 0x%04x (%s)", cs, cs == 0x600d ? "OK" : "FAIL");
+        nanosleep(&ms12, NULL);
+        /* PCS enable */
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_RESET_CTRL, 0);
+        /* optical overrides + levels (robo2 init values: c8e4 override, c800 b8/b9) */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_CFG,
+                            v | X84_RXLOS_OVERRIDE | X84_MODABS_OVERRIDE | X84_MOD_PRESENCE);
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_SIGLVL, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_SIGLVL,
+                            v | X84_RXLOS_LVL | X84_MODABS_LVL);
+        /* speed 10G + PMA type 10G-LRM (media side) */
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_PMAD_CTRL, X84_SS_10G);
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_PMAD_CTRL2, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_PMAD_CTRL2,
+                            (v & ~0xfu) | X84_PMA_TYPE_10G_LRM);
+        /* enable TX/laser (clear TX-disable, TxOn b12, lane power b4, c800[7] strap) */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_TX_DISABLE, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_TX_DISABLE, v & ~0x1u);
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_CFG, v & ~(1u << 12));
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &v);
+        if (v & (1u << 4)) {
+            uint32_t c8 = 0;
+            cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_SIGLVL, &c8);
+            cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_SIGLVL,
+                                (c8 & (1u << 7)) ? (c8 & ~(1u << 7)) : (c8 | (1u << 7)));
+        }
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_CFG, v & ~(1u << 4));
+    }
+}
+
 static int
 parse_unit(const char *s, uint32_t *ven, uint32_t *dev, uint32_t *rev, uint32_t *base)
 {
@@ -1448,7 +1545,7 @@ main(int argc, char *argv[])
             bmd_port_mode_set(unit, xp, bmdPortModeDisabled, 0);
         { struct timespec ts = { .tv_sec = 0, .tv_nsec = 200*1000*1000 }; nanosleep(&ts, NULL); }
 
-        sfp_tx_enable(unit);   /* configure 84758 optics/levels while the port is down */
+        sfp_full_reinit(unit); /* WHOLESALE robo2-order 84758 re-init (reset+re-ucode+config) */
 
         { struct timespec ts = { .tv_sec = 0, .tv_nsec = 200*1000*1000 }; nanosleep(&ts, NULL); }
         for (xp = SFP_LO; xp <= SFP_HI; xp++) {
