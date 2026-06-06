@@ -1235,14 +1235,20 @@ main(int argc, char *argv[])
             LOG("port %d PHY chain:", p);
             if (!pc) LOG("    (no PHY ctrl bound)");
             while (pc) {
-                LOG("    drv=%-14s bus=%-22s addr=0x%02x",
+                int plink = -2, pan = -2;
+                /* per-PHY link via that driver's own pd_link_get — isolates the
+                 * external 84758 from the internal Warpcore serdes. */
+                if (pc->drv && pc->drv->pd_link_get) {
+                    PHY_LINK_GET(pc, &plink, &pan);
+                }
+                LOG("    drv=%-16s bus=%-22s addr=0x%02x  link=%d an=%d",
                     pc->drv ? pc->drv->drv_name : "?",
                     pc->bus ? pc->bus->drv_name : "?",
-                    PHY_CTRL_PHY_ADDR(pc));
+                    PHY_CTRL_PHY_ADDR(pc), plink, pan);
                 pc = pc->next;
             }
             if (bmd_phy_link_get(unit, p, &link, &an) >= 0)
-                LOG("    bmd_phy_link_get: link=%d an_done=%d", link, an);
+                LOG("    combined bmd_phy_link_get: link=%d an_done=%d", link, an);
         }
         LOG("--up-check: waiting 5s for copper autoneg to settle...");
         { struct timespec ts = { .tv_sec = 5, .tv_nsec = 0 }; nanosleep(&ts, NULL); }
@@ -1261,28 +1267,55 @@ main(int argc, char *argv[])
             LOG("SFP+ 84758 per-MMD status (1=PMA/PMD media, 3=PCS media, 4=PHY-XS system):");
             for (s = 0; s < 4; s++) {
                 uint32_t addr = CDK_XGSM_MIIM_EBUS(2) | s;
-                uint32_t pmd_st=0, pmd_sd=0, pcs_st=0, blk=0, ber=0, xs_st=0, xs_al=0;
-                uint32_t c1=0, c2=0, gp=0;
+                uint32_t pmd_st=0, pmd_sd=0, pcs_st=0, blk=0, st2pma=0, st2pcs=0, gp=0;
+                uint32_t c1=0, c2=0;
                 cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_PMAD_CTRL,  &c1); /* readback speed cfg */
                 cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_PMAD_CTRL2, &c2);
-                cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0xc820, &gp);  /* SPEED_LINK_DETECT_STAT (micro) */
-                LOG("    xe%d cfg-readback: 1.0000=%04x 1.0007=%04x c820=%04x",
-                    s, c1 & 0xffff, c2 & 0xffff, gp & 0xffff);
-                cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x0001, &pmd_st); /* PMA/PMD status1 b2=rxlink */
-                cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x000a, &pmd_sd); /* PMD signal detect */
-                cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0001, &pcs_st); /* PCS status1 b2=rxlink */
-                cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0020, &blk);    /* 10GBASE-R PCS b0=blocklock,b1=hiber */
-                cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0021, &ber);    /* 10GBASE-R BER/errblk counts */
-                cdk_xgsm_miim_read(unit, addr, (4 << 16) | 0x0001, &xs_st);  /* PHY-XS status1 b2=rxlink */
-                cdk_xgsm_miim_read(unit, addr, (4 << 16) | 0x0018, &xs_al);  /* PHY-XS lane align b12=align */
-                LOG("  xe%d(0x%02x): PMD[st1=%04x sd=%04x rxlink=%d] PCS[st1=%04x "
-                    "blklk(3.20)=%04x rxlink=%d] XS[st1=%04x align(4.18)=%04x rxlink=%d]%s",
-                    s, addr,
-                    pmd_st&0xffff, pmd_sd&0xffff, !!(pmd_st&0x4),
-                    pcs_st&0xffff, blk&0xffff, !!(pcs_st&0x4),
-                    xs_st&0xffff, xs_al&0xffff, !!(xs_st&0x4),
-                    (blk&0x1) ? "  <== MEDIA PCS LOCK" : "");
-                (void)ber;
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0xc820, &gp);  /* SPEED_LINK_DETECT (micro) */
+                /* STAT2 (reg 8) clears latched local faults; then read status1
+                 * TWICE because link-alive (bit2) is latch-low. */
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x0008, &st2pma);
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x0008, &st2pma);
+                cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0008, &st2pcs);
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x0001, &pmd_st);
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x0001, &pmd_st); /* 2nd read = current */
+                cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x000a, &pmd_sd);
+                cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0001, &pcs_st);
+                cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0001, &pcs_st); /* 2nd read */
+                cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0020, &blk);    /* 10GBASE-R PCS b0=blocklock */
+                LOG("  xe%d(0x%02x) cfg[1.0=%04x 1.7=%04x c820=%04x spd=%s] "
+                    "PMD[st1=%04x st2=%04x sd=%04x LA=%d] PCS[st1=%04x st2=%04x "
+                    "blklk=%04x LA=%d]%s", s, addr,
+                    c1&0xffff, c2&0xffff, gp&0xffff,
+                    (gp&0x44)?"10G":(gp&0x11)?"1G":"?",
+                    pmd_st&0xffff, st2pma&0xffff, pmd_sd&0xffff, !!(pmd_st&0x4),
+                    pcs_st&0xffff, st2pcs&0xffff, blk&0xffff, !!(pcs_st&0x4),
+                    ((pmd_st&0x4)&&(pcs_st&0x4)) ? "  <== LINK (PMA&PCS LA)" :
+                    (blk&0x1) ? "  <== PCS block-lock" : "");
+            }
+        }
+
+        /* LOOPBACK ISOLATION of the WARPCORE CORE: engage the internal Warpcore's
+         * OWN analog loopback (TX->RX inside the SerDes), not the outer 84758's.
+         * If the Warpcore PCS then locks, the SerDes core + PLL are good and the
+         * gate is downstream (84758 retiming / fiber). If it stays down, the
+         * Warpcore core/RX itself isn't locking — the deep RX-cal layer. */
+        {
+            int p = SFP_LO, pl = -2, pa = -2;
+            phy_ctrl_t *pc, *wc = NULL;
+            for (pc = BMD_PORT_PHY_CTRL(unit, p); pc != NULL; pc = pc->next) {
+                if (pc->drv && pc->drv->drv_name &&
+                    !strcmp(pc->drv->drv_name, "bcmi_warpcore_xgxs")) { wc = pc; break; }
+            }
+            LOG("Warpcore-core loopback isolation on port %d (xe0):", p);
+            if (wc && wc->drv->pd_loopback_set) {
+                int rc2 = PHY_LOOPBACK_SET(wc, 1);
+                { struct timespec ts = { .tv_sec = 2, .tv_nsec = 0 }; nanosleep(&ts, NULL); }
+                PHY_LINK_GET(wc, &pl, &pa);
+                LOG("    Warpcore internal loopback rc=%d -> Warpcore link=%d", rc2, pl);
+                PHY_LOOPBACK_SET(wc, 0);
+            } else {
+                LOG("    (no Warpcore phy_ctrl in chain)");
             }
         }
     }

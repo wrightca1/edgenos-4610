@@ -100,14 +100,27 @@ the open-source driver — all confirmed to take on-box:
 - optical override (`c8e4`) + levels (`c800` b8/b9) + TX-enable (the `c800[7]`
   TxOnOff strap).
 
-Yet the media PMD still reads `sd=0` and no register on the 84758 moves it — so
-the gate is **upstream of the 84758**: it isn't being fed valid 10G from the
-internal **Warpcore SerDes** (link = 84758-PMD AND Warpcore-serdes per the
-open-source `link_get`). That is the same per-lane RX-calibration layer as the 40G
-QSFP work (OpenMDK lacks `independent_lane_init`). Verifying/bringing up the
-Warpcore 10G lane lock is the remaining effort; the full robo2 driver
-(`phy84740.c`/`.h` in `phy84758-src/broadcom-official/`) is the 84758-side
-reference and `project_qsfp_persist_and_eq` is the Warpcore-side reference.
+Yet the media PMD still reads `sd=0` and no register on the 84758 moves it.
+
+**Isolated to the Warpcore SerDes core (2026-06-07).** Reading each PHY in the
+chain directly (`edged --up-check`): both the external 84758 **and** the internal
+`bcmi_warpcore_xgxs` report `link=0`. Decisively, enabling the **Warpcore's own
+internal analog loopback** (TX→RX inside the SerDes — no fiber, no 84758, no
+partner) **still yields `link=0`**. So the Warpcore PCS won't lock even on its own
+transmit — the 10G datapath failure is the **Warpcore core itself**, not the
+optics, fiber, partner, or 84758 (all of which are now verified good / fully
+configured).
+
+This is the **same fundamental Warpcore bring-up / per-lane RX-cal limitation the
+40G QSFP effort hit** (`project_qsfp_persist_and_eq`, `project_wc_fw_pause_protocol`
+— OpenMDK lacks the full SDK's `independent_lane_init`; that effort decoded a
+firmware-pause/host-cal handshake but did not fully crack the lane lock either). It
+is **not** reachable by register configuration from `edged`; closing it needs the
+full-SDK Warpcore lane bring-up (PLL/CDR + RX adaptation), which is a dedicated
+SerDes effort, not a datapath-config task. Everything up to the Warpcore — copper,
+L2, SFP+ MAC@10G, 84758 (speed/PCS/optical/laser per the open-source driver),
+module/optics — is done and verified. The 84758-side diagnostics + loopback
+isolation tooling are in `edged --up-check`.
 
 ## OpenMDK changes
 
