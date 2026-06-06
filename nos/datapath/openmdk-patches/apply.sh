@@ -12,7 +12,14 @@ for p in "$HERE"/0*.patch; do
     patch -p1 < "$p"
 done
 
+# Install the BCM84758 ucode (Broadcom source-available, shipped in this repo) into
+# both the canonical PKG/ source and the generated pkgsrc/ build tree.
+for d in phy/PKG/chip/bcm84740 phy/pkgsrc/chip/bcm84740; do
+    if [ -d "$MDK/$d" ]; then
+        cp "$HERE/bcm84758_ucode.c" "$MDK/$d/"
+        echo "installed bcm84758_ucode.c -> $d"
+    fi
+done
+
 echo
-echo "Patches applied. NOTE: also install the BCM84758 ucode (kept local, see"
-echo "README.md 'Firmware') into phy/PKG/chip/bcm84740/ and phy/pkgsrc/chip/bcm84740/"
-echo "then rebuild with build-datapath.sh."
+echo "Done. Rebuild with build-datapath.sh."

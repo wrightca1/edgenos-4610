@@ -25,8 +25,13 @@ live-investigation/backup/
 # compiled CPLD reader (build from i2cread.c)
 live-investigation/tools/i2cread
 
-# BCM84758 PHY driver+firmware pulled from public Broadcom XGS SDK (source-available; keep local)
-nos/datapath/phy84758-src/
+# BCM84758 PHY driver+firmware. The Broadcom-OFFICIAL copy (from Broadcom's own
+# public GitHub robo2-xsdk repo, WITH its Legal/LICENSE grant) is redistributable
+# and IS committed (broadcom-official/ + INTEGRATION.md). The top-level files came
+# from an unofficial mirror with a murky header — those stay local.
+nos/datapath/phy84758-src/*
+!nos/datapath/phy84758-src/broadcom-official/
+!nos/datapath/phy84758-src/INTEGRATION.md
 
 # built datapath daemon (artifact; source is edged.c)
 nos/datapath/mdk-app/edged

@@ -55,3 +55,23 @@ work. The 84758 optical-signal config itself is now correct in `edged`
 these, which had pinned `sigdet=0`).
 
 Raw hexdumps: see git history / `i2cdump -y -f {2,3} 0x50 b` and `0x51 b`.
+
+## Update — module swap test + the RX-power anomaly RESOLVED
+
+Briefly swapped the xe1 Delta for a second Finisar **`FTLX1370W4BTL`** (a 9.8304
+Gb/s **CPRI** module — nominal bit-rate byte `0x62` vs the W3's `0x67`; optically
+the same 1310nm/1.4km LRL, fine for a 10G link, but a CPRI part). That W4 read a
+*hot* TX. Then swapped the Delta back.
+
+**The RX>TX anomaly is a per-module DOM miscalibration, NOT a topology problem.**
+Trusting the accurate module (the Finisar W3, internally calibrated):
+- xe0 Finisar RX = **−1.5 dBm** ≈ xe1 Delta TX = **−2.0 dBm** → a clean match, so
+  **the two ports ARE cross-fibered to each other** and the Finisar correctly
+  receives the Delta's light.
+- xe1 Delta RX = **+3 dBm** is impossible from a −2 dBm source over passive fiber
+  → the **Delta module's RX monitor over-reports by ~5 dB** (factory cal quirk).
+- Finisar TX = −2 dBm (normal) → not a TX-regulation/over-power issue.
+
+⇒ Optics + fiber are healthy and the ports are connected. The SFP+ 10G link
+blocker is therefore **unambiguously chip-side** (Warpcore 10G SerDes lock), with
+no optical or topology caveat.

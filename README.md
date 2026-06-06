@@ -103,8 +103,10 @@ Details: [`nos/datapath/DATAPATH_STATUS.md`](nos/datapath/DATAPATH_STATUS.md).
 The few OpenMDK changes this board needs are captured as patches in
 [`nos/datapath/openmdk-patches/`](nos/datapath/openmdk-patches/) (OpenMDK is a
 separate upstream repo, so we patch a clone rather than fork it). The BCM84758
-PHY firmware is Broadcom source-available and kept local per the proprietary-
-stays-local convention.
+PHY driver + firmware is Broadcom **source-available** (from Broadcom's own public
+robo2-xsdk GitHub repo, with its `Legal/LICENSE` grant) and is included in
+[`nos/datapath/phy84758-src/broadcom-official/`](nos/datapath/phy84758-src/broadcom-official/);
+`apply.sh` installs the ucode into an OpenMDK clone.
 
 ---
 

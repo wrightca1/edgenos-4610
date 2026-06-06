@@ -34,20 +34,20 @@ Or use `./apply.sh /path/to/OpenMDK`.
 Also set at build time (see `../build-datapath.sh`): `-DPHY_CONFIG_INCLUDE_BCM84740=1`
 and `-DPHY_CONFIG_INCLUDE_BCM54282=1` so both drivers are in the probe list.
 
-## Firmware (NOT in git)
+## Firmware (in this repo — Broadcom source-available)
 
-Patch 04 references `bcm84758_ucode[]`. That firmware array
-(`phy/PKG/chip/bcm84740/bcm84758_ucode.c`, 32 KB v0128) is the BCM84758 8051
-ucode — Broadcom **source-available** (robo2-xsdk grant, byte-identical to the
-copy in our own ICOS). Per project convention it is **kept local, not pushed**.
-Source it from `nos/datapath/phy84758-src/broadcom-official/phy84758_ucode.c`
-(git-ignored) and install it into OpenMDK before building:
+Patch 04 references `bcm84758_ucode[]`. That firmware array (`bcm84758_ucode.c`,
+the 32 KB v0128 8051 ucode) is **included here** — `apply.sh` installs it into
+OpenMDK's `phy/{PKG,pkgsrc}/chip/bcm84740/` automatically.
 
-```sh
-# rename symbols to the OpenMDK convention (bcm84758_ucode / _len) and drop in:
-cp bcm84758_ucode.c  OpenMDK/phy/PKG/chip/bcm84740/
-cp bcm84758_ucode.c  OpenMDK/phy/pkgsrc/chip/bcm84740/
-```
-
-See `../phy84758-src/INTEGRATION.md` for the symbol-rename details and licence
-notes.
+It is Broadcom **source-available** firmware: pulled from Broadcom's own public
+GitHub repo `Broadcom/Broadcom-Compute-Connectivity-Software-robo2-xsdk` under its
+`Legal/LICENSE`, which grants a worldwide, royalty-free, perpetual right to
+reproduce, distribute, and create/distribute derivative works in source form. The
+per-file `$Copyright … All rights reserved$` header is Broadcom's standard
+boilerplate that the LICENSE supersedes — the same arrangement under which Broadcom
+publishes OpenMDK/OpenBCM. The byte-for-byte authoritative source (driver +
+firmware + `LICENSE` + `PROVENANCE.md`) lives in
+[`../phy84758-src/broadcom-official/`](../phy84758-src/broadcom-official/);
+`bcm84758_ucode.c` here is just that firmware with symbols renamed to the OpenMDK
+`bcm84758_ucode[]` convention. See `../phy84758-src/INTEGRATION.md`.

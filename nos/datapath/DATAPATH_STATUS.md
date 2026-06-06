@@ -89,6 +89,7 @@ local in `phy84758-src/broadcom-official/`) is the reference for it.
 ## OpenMDK changes
 
 See [`openmdk-patches/`](openmdk-patches/) — 4 patches against canonical OpenMDK
-`PKG/` source, plus the BCM84758 firmware note (kept local). Build flags
+`PKG/` source, plus the BCM84758 driver+firmware (Broadcom source-available, in
+`phy84758-src/broadcom-official/`; `apply.sh` installs the ucode). Build flags
 `-DPHY_CONFIG_INCLUDE_BCM84740=1 -DPHY_CONFIG_INCLUDE_BCM54282=1` are in
 `build-datapath.sh`.
