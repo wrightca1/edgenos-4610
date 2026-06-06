@@ -886,6 +886,20 @@ sfp_tx_enable(int unit)
         cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_CHIP_MODE,
                             v & ~(X84_DAC_MODE | X84_BKPLANE_MODE));
 
+        /* (0-pre-c) DISABLE AN (7.0) + CL72 link-training (1.0x0096). 10GBASE-LR
+         * optical has NO autoneg / no CL72 link-training; if either is left armed on
+         * the 84758, its media RX waits forever on a negotiation the LR peer never
+         * runs -> signal-detect (1.000a) never asserts (sd=0). robo2 phy_84740_an_set
+         * / init disable these (phy84740.c:1517-1521). edged never did -> prime suspect. */
+        { uint32_t an=0, cl72=0;
+          cdk_xgsm_miim_read(unit, addr, (7 << 16) | 0x0000, &an);
+          cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x0096, &cl72);
+          if (s == 0) LOG("    xe0 before AN(7.0)=%04x CL72(1.0096)=%04x -> disabling",
+                          an & 0xffff, cl72 & 0xffff);
+          cdk_xgsm_miim_write(unit, addr, (7 << 16) | 0x0000, an & ~(1u << 12)); /* AN_EN off */
+          cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0x0096, 0x0000);           /* CL72 off */
+        }
+
         /* (0) Set the 84758 PMA to 10G (robo2 phy_84740_speed_set). OpenMDK loads
          * the ucode but NEVER configures the speed, so the media datapath never
          * runs and the PMD signal-detect stays 0. CTRL1 = speed-select MSB|LSB
