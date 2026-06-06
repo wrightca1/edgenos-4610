@@ -36,3 +36,4 @@ nos/datapath/phy84758-src/*
 # built datapath daemon (artifact; source is edged.c)
 nos/datapath/mdk-app/edged
 live-investigation/sdk-ref/
+nos/datapath/artifacts/
