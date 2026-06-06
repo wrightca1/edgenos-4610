@@ -815,6 +815,40 @@ copper_up(int unit)
 #define X84_REPEATER_DET 0xc81d  /* (b1|b2)=0x6 => repeater/retimer mode */
 #define X84_SQUELCH_CTL 0xcd18   /* devad 3 (PCS): RX squelch enable per speed */
 
+/* Read `count` bytes from i2c device `dev` (SFP EEPROM = 0x50) at `offset` via the
+ * BCM84758's OWN 2-wire/BSC master (port s -> EBUS2|s, lane 0). Ports the robo2
+ * _phy_84740_bsc_rw READ path (non-single-port branch): stage RAM/addr/count/dev,
+ * issue READ_OP at 1.0x8000, poll 2W_STAT(b3:2)==COMPLETE(0x4), read bytes from
+ * 1.0x8007+i. Returns 0 ok, -1 timeout, -2 fail. Proves whether the 84758's i2c
+ * is physically wired to the SFP module (vs the CPU i2c-mux/optoe path). */
+static int
+sfp_i2c_read_via_phy(int unit, int s, int dev, int offset, int count, uint8_t *buf)
+{
+    uint32_t addr = CDK_XGSM_MIIM_EBUS(2) | s;
+    uint32_t v = 0;
+    int i, to;
+    struct timespec ts = { .tv_sec = 0, .tv_nsec = 10 * 1000 * 1000 };  /* 10ms */
+    cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_AER_ADDR, 0);   /* lane 0 */
+    cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0x8004, 0x8007);    /* RAM start */
+    cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0x8003, offset);
+    cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0x8002, count);
+    cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0x8005, 1 | (dev << 9));
+    cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0x8000, 0x8000 | 0x2); /* BSC READ_OP */
+    for (to = 0; to < 100; to++) {
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x8000, &v);
+        if ((v & 0x000c) == 0x0004) break;    /* COMPLETE */
+        if ((v & 0x000c) == 0x000c) return -2; /* FAIL */
+        nanosleep(&ts, NULL);
+    }
+    if ((v & 0x000c) != 0x0004) return -1;    /* timeout/IN_PRG */
+    nanosleep(&ts, NULL);
+    for (i = 0; i < count; i++) {
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | (0x8007 + i), &v);
+        buf[i] = (uint8_t)(v & 0xff);
+    }
+    return 0;
+}
+
 /* Port the robo2-xsdk phy84740 optical bring-up + enable_set for each SFP+ (xe0-3
  * at EBUS2 0x80-0x83). OpenMDK's bcm84740 driver sets the c8e4 override but NEVER
  * the c800 RXLOS/MOD_ABS *level* bits — so the overridden RX_LOS resolves to "LOS"
@@ -1343,6 +1377,29 @@ main(int argc, char *argv[])
                     pcs_st&0xffff, st2pcs&0xffff, blk&0xffff, !!(pcs_st&0x4),
                     ((pmd_st&0x4)&&(pcs_st&0x4)) ? "  <== LINK (PMA&PCS LA)" :
                     (blk&0x1) ? "  <== PCS block-lock" : "");
+            }
+        }
+
+        /* Does the 84758's OWN i2c master see the SFP module? Read EEPROM bytes 0-3
+         * (A0h @0x50: b0=identifier 0x03=SFP, b2=connector, b3=10G compliance) via
+         * the PHY BSC master. If this returns 0x03..., the PHY<->module i2c IS wired
+         * (so the PHY could do real module auto-detect / read optics params); if it
+         * times out, the AS4610 wires the module only to the CPU i2c-mux (optoe) and
+         * the PHY can't read it -> auto-detect must stay overridden/off. */
+        {
+            int s;
+            for (s = 0; s < 2; s++) {   /* xe0, xe1 = the fibered pair */
+                uint8_t eep[4] = {0};
+                int rc3 = sfp_i2c_read_via_phy(unit, s, 0x50, 0, 4, eep);
+                if (rc3 == 0)
+                    LOG("  xe%d PHY-i2c SFP read: %02x %02x %02x %02x  (b0 id=%s)",
+                        s, eep[0], eep[1], eep[2], eep[3],
+                        eep[0] == 0x03 ? "0x03 SFP -- PHY i2c WIRED to module" :
+                        eep[0] == 0xff || eep[0] == 0x00 ? "empty -- PHY i2c NOT wired" : "?");
+                else
+                    LOG("  xe%d PHY-i2c SFP read: %s -- PHY's i2c master NOT wired to "
+                        "the module (CPU i2c-mux/optoe path only)",
+                        s, rc3 == -2 ? "BSC FAIL" : "timeout");
             }
         }
 
