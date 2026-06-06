@@ -1,0 +1,164 @@
+edged: EdgeNOS-4610 data-plane daemon starting
+edged: device 0x14e4:0xb340 rev 0x01, CMIC @ phys 0x48000000 (/dev/mem)
+edged: ext-phy: deasserted CPLD reset (0x19=0x00 0x1b=0x00 verified)
+edged: ext-mdio: wrote 22 ICOS CMIC MIIM bus-map regs @0x48011000
+edged: [1/6] attach        OK
+edged: [2/6] bmd_reset     OK  (core PLL + clocks up)
+edged: ext-mdio: wrote 22 ICOS CMIC MIIM bus-map regs @0x48011000
+edged: [3/6] bmd_init      OK  (SCHAN core access working)
+edged: ext-mdio: wrote 22 ICOS CMIC MIIM bus-map regs @0x48011000
+edged: ext-copper: re-probed 48 ports, 48 now bound bcm54282
+edged: [4/6] swinit        OK  (L2 switching initialized)
+edged: [5/6] ports        55/61 front ports up (native speed)
+edged:        SFP+ port 53 -> 10G XFI
+edged:        SFP+ port 54 -> 10G XFI
+edged:        SFP+ port 55 -> 10G XFI
+edged:        SFP+ port 56 -> 10G XFI
+edged: [6/6] L2 forward   55/55 ports set to STP FORWARDING (VLAN 1)
+edged: inventory: 0×1G  4×10G  0×20G  51×other
+edged: 84758(xe0) PMA-PMD ID1=0x86f0  fw-checksum(1.0xca1c)=0x600d <== UCODE LOADED
+edged: SFP+ 84758: robo2 optical bring-up (c8e4 override + c800 levels b8/b9 + TX-enable) on xe0-3
+edged: data plane UP: BCM56340 initialized, switching-ready, ports forwarding
+edged: port 1 PHY chain:
+edged:     drv=bcm54282         bus=bcm956340k_miim_ext    addr=0x01  link=0 an=0
+edged:     drv=bcmi_qsgmii_serdes bus=bcm56340_miim_int      addr=0x201  link=0 an=1
+edged:     combined bmd_phy_link_get: link=0 an_done=0
+edged: port 23 PHY chain:
+edged:     drv=bcm54282         bus=bcm956340k_miim_ext    addr=0x1b  link=0 an=0
+edged:     drv=bcmi_qsgmii_serdes bus=bcm56340_miim_int      addr=0x211  link=0 an=0
+edged:     combined bmd_phy_link_get: link=0 an_done=0
+edged: port 49 PHY chain:
+edged:     (no PHY ctrl bound)
+edged:     combined bmd_phy_link_get: link=1 an_done=1
+edged: port 50 PHY chain:
+edged:     (no PHY ctrl bound)
+edged:     combined bmd_phy_link_get: link=1 an_done=1
+edged: port 51 PHY chain:
+edged:     (no PHY ctrl bound)
+edged:     combined bmd_phy_link_get: link=1 an_done=1
+edged: port 52 PHY chain:
+edged:     (no PHY ctrl bound)
+edged:     combined bmd_phy_link_get: link=1 an_done=1
+edged: port 53 PHY chain:
+edged:     drv=bcm84740         bus=bcm956340k_miim_ext    addr=0x80  link=0 an=0
+edged:     drv=bcmi_warpcore_xgxs bus=bcm56340_miim_int      addr=0x281  link=0 an=0
+edged:     combined bmd_phy_link_get: link=0 an_done=0
+edged: port 54 PHY chain:
+edged:     drv=bcm84740         bus=bcm956340k_miim_ext    addr=0x81  link=0 an=0
+edged:     drv=bcmi_warpcore_xgxs bus=bcm56340_miim_int      addr=0x281  link=0 an=0
+edged:     combined bmd_phy_link_get: link=0 an_done=0
+edged: port 57 PHY chain:
+edged:     drv=bcmi_warpcore_xgxs bus=bcm56340_miim_int      addr=0x285  link=0 an=0
+edged:     combined bmd_phy_link_get: link=0 an_done=0
+edged: port 61 PHY chain:
+edged:     drv=bcmi_warpcore_xgxs bus=bcm56340_miim_int      addr=0x289  link=0 an=0
+edged:     combined bmd_phy_link_get: link=0 an_done=0
+edged: --up-check: waiting 5s for copper autoneg to settle...
+edged: copper link sweep (clause-22): EBUS0/EBUS1, addr 0x01-0x3f
+edged:   per-addr: PHYID reg2:reg3, MII-status reg1 (bit2=link), Aux reg0x11
+edged:   EBUS0 0x01  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 1 (ge0)
+edged:   EBUS0 0x02  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 2 (ge1)
+edged:   EBUS0 0x03  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 3 (ge2)
+edged:   EBUS0 0x04  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 4 (ge3)
+edged:   EBUS0 0x05  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 5 (ge4)
+edged:   EBUS0 0x06  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 6 (ge5)
+edged:   EBUS0 0x07  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 7 (ge6)
+edged:   EBUS0 0x08  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 8 (ge7)
+edged:   EBUS0 0x0b  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 9 (ge8)
+edged:   EBUS0 0x0c  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 10 (ge9)
+edged:   EBUS0 0x0d  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 11 (ge10)
+edged:   EBUS0 0x0e  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 12 (ge11)
+edged:   EBUS0 0x0f  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 13 (ge12)
+edged:   EBUS0 0x10  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 14 (ge13)
+edged:   EBUS0 0x11  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 15 (ge14)
+edged:   EBUS0 0x12  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 16 (ge15)
+edged:   EBUS0 0x15  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 17 (ge16)
+edged:   EBUS0 0x16  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 18 (ge17)
+edged:   EBUS0 0x17  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 19 (ge18)
+edged:   EBUS0 0x18  id=600d:845b  st=0x79c9 down  aux=0x0000 spd=?  
+edged:         ^ front-panel JACK 20 (ge19)
+edged:   EBUS0 0x19  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 21 (ge20)
+edged:   EBUS0 0x1a  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 22 (ge21)
+edged:   EBUS0 0x1b  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 23 (ge22)
+edged:   EBUS0 0x1c  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 24 (ge23)
+edged:   EBUS1 0x01  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 25 (ge24)
+edged:   EBUS1 0x02  id=600d:845b  st=0x79ed LINK-UP  aux=0x2301 spd=100H  
+edged:         ^ front-panel JACK 26 (ge25)  *** LINKED ***
+edged:   EBUS1 0x03  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 27 (ge26)
+edged:   EBUS1 0x04  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 28 (ge27)
+edged:   EBUS1 0x05  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 29 (ge28)
+edged:   EBUS1 0x06  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 30 (ge29)
+edged:   EBUS1 0x07  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 31 (ge30)
+edged:   EBUS1 0x08  id=600d:845b  st=0x79c9 down  aux=0x0000 spd=?  
+edged:         ^ front-panel JACK 32 (ge31)
+edged:   EBUS1 0x0b  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 33 (ge32)
+edged:   EBUS1 0x0c  id=600d:845b  st=0x79c9 down  aux=0x2000 spd=?  
+edged:         ^ front-panel JACK 34 (ge33)
+edged:   EBUS1 0x0d  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 35 (ge34)
+edged:   EBUS1 0x0e  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 36 (ge35)
+edged:   EBUS1 0x0f  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 37 (ge36)
+edged:   EBUS1 0x10  id=600d:845b  st=0x79c9 down  aux=0x0000 spd=?  
+edged:         ^ front-panel JACK 38 (ge37)
+edged:   EBUS1 0x11  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 39 (ge38)
+edged:   EBUS1 0x12  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 40 (ge39)
+edged:   EBUS1 0x15  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 41 (ge40)
+edged:   EBUS1 0x16  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 42 (ge41)
+edged:   EBUS1 0x17  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 43 (ge42)
+edged:   EBUS1 0x18  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 44 (ge43)
+edged:   EBUS1 0x19  id=600d:845b  st=0x79c9 down  aux=0x2001 spd=?  
+edged:         ^ front-panel JACK 45 (ge44)
+edged:   EBUS1 0x1a  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 46 (ge45)
+edged:   EBUS1 0x1b  id=600d:845b  st=0x79ed LINK-UP  aux=0x0301 spd=100H  
+edged:         ^ front-panel JACK 47 (ge46)  *** LINKED ***
+edged:   EBUS1 0x1c  id=600d:845b  st=0x79c9 down  aux=0x0001 spd=?  
+edged:         ^ front-panel JACK 48 (ge47)
+edged: copper link sweep done: 48 PHY(s) answered, 2 link UP
+edged: SFP+ 84758 per-MMD status (1=PMA/PMD media, 3=PCS media, 4=PHY-XS system):
+edged:   xe0(0x80) cfg[1.0=2040 1.7=0008 c820=e044 spd=10G] PMD[st1=0082 st2=b7e1 sd=0000 LA=0] PCS[st1=0082 st2=8401 blklk=000c LA=0]
+edged:   xe1(0x81) cfg[1.0=2040 1.7=0008 c820=e044 spd=10G] PMD[st1=0082 st2=b7e1 sd=0000 LA=0] PCS[st1=0082 st2=8401 blklk=000c LA=0]
+edged:   xe2(0x82) cfg[1.0=2040 1.7=0008 c820=e044 spd=10G] PMD[st1=0082 st2=b7e1 sd=0000 LA=0] PCS[st1=0082 st2=8401 blklk=000c LA=0]
+edged:   xe3(0x83) cfg[1.0=2040 1.7=0008 c820=e044 spd=10G] PMD[st1=0082 st2=b7e1 sd=0000 LA=0] PCS[st1=0082 st2=8401 blklk=000c LA=0]
+edged: Warpcore-core loopback isolation on port 53 (xe0):
+edged:     Warpcore speed_get = 10000
+edged:     pre-lpbk: XGXSSTATUS=8b08 TXPLL_LOCK=1  PCS_STAT1=0082 RXlink(b2)=0
+edged:     in-lpbk(rc=0): XGXSSTATUS=8b08 TXPLL_LOCK=1  PCS_STAT1=0082 RXlink=0  drv-link=1

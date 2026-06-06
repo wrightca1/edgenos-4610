@@ -10,6 +10,9 @@ Build: `./build-datapath.sh` (cross arm-linux-gnueabihf in the builder image).
 Run on the switch: `/tmp/edged` (one-shot init) or `/tmp/edged --keep` (resident,
 polls link). Diagnostics: `--scan-link`, `--copper-up`, `--up-check`, `--scan-mdio`.
 
+> **Full bring-up narrative + the SFP+ 10G/Warpcore investigation and the ICOS
+> dynamic-analysis plan:** [`WARPCORE_10G_INVESTIGATION.md`](WARPCORE_10G_INVESTIGATION.md).
+
 ## Status at a glance
 
 | Plane | State |
@@ -144,6 +147,19 @@ already does more than expected:**
   — exactly the wall `project_wc_fw_pause_protocol` hit on the 20G/QSFP side
   (decoded the 0x820e/0xffe0 fw-pause + host-cal handshake but did not fully crack
   the lane adaptation).
+
+**5610 "restart-cruft" hypothesis tested & ruled out (cold reboot, 2026-06-06).**
+The 5610 working-switch effort found that a port which won't link after *many*
+`edged` restarts can be cured by a cold boot — its Warpcore lanes accumulate cruft
+from being re-armed ~50× ("REBOOT before chasing SerDes"). The 4610 uses the **same
+Warpcore family** (both `bcm56340_a0` and `bcm56840_a0` bind `bcmi_warpcore_xgxs` in
+OpenMDK), and this session had run `edged` dozens of times without a cold boot — so
+the box was rebooted and `edged --up-check` run **exactly once** on a pristine chip.
+Result: **identical** — SFP+ ports 53/54 `link=0`, PMD `sd=0000`, and the Warpcore
+**internal analog loopback still reads `RX_LINKSTATUS=0`** despite `speed_get=10000`
+and `TXPLL_LOCK=1`. So on the 4610 this is **not** restart cruft; it is a genuine
+RX-adaptation gap. (The 5610's external **DS100DF410 retimers** — the other half of
+its SerDes story — aren't on the 4610 either, so that work doesn't transfer.)
 
 **Conclusion:** the SFP+ 10G *link* is blocked by the Warpcore uC RX-adaptation,
 which neither OpenMDK (lacks it) nor the local OpenBCM tree (incomplete) can close,

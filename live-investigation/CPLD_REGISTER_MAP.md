@@ -1,5 +1,10 @@
 # AS4610-54T CPLD register map — ONL driver vs live hardware (VERIFIED)
 
+> **Physical part (board photo, 2026-06-06):** the CPLD is a **Lattice MachXO2
+> `LCMXO2-1200HC`** FPGA, next to the board-label barcode on the
+> `ES4654BH-0917-EC (4610-54T-O-AC-Fv1) MAIN` PCBA (S/N `EC2025000934`, P/N
+> `142000001517A REV:01`). Driven over i2c as `accton_as4610_cpld` @ 0x30.
+
 Cross-check of ONL's `accton_as4610_cpld` (+ `_psu`/`_fan`/`_leds`) register map
 against a **live read of the CPLD** (i2c-0 @ 0x30) on the running box. Read-only
 (SMBus read_byte_data) via a soft-float `i2cread` tool (the ICOS kernel is
