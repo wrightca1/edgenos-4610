@@ -128,9 +128,30 @@ full SDK's per-lane RX bring-up / `independent_lane_init`). It is **not** reacha
 by register config from `edged`. Everything up to it — copper, L2, SFP+ MAC@10G,
 84758 (speed/PCS/optical/laser per the open-source driver), modules/optics, the
 Warpcore PLL+speed — is done and verified. Diagnostic tooling (per-PHY link,
-Warpcore PLL/PCS reads, internal-loopback isolation) is in `edged --up-check`. The
-realistic path to close it is the **full Broadcom SDK datapath build** (OpenBCM/
-OpenNSL), which carries the Warpcore RX bring-up OpenMDK omits.
+Warpcore PLL/PCS reads, internal-loopback isolation) is in `edged --up-check`.
+
+**Full-SDK path assessed (2026-06-07) — not viable with what we have, and OpenMDK
+already does more than expected:**
+- The local **OpenBCM `sdk-6.5.27` tree is incomplete**: `src/soc/` has only
+  `common/` + `esw/`, **no `phy/`** — so it cannot supply the Warpcore PHY driver /
+  RX bring-up. (`rebuild-edged-with-sdk.sh` is a 5610/PPC *OpenMDK* rebuild, not a
+  full-SDK build.)
+- OpenMDK's `bcmi_warpcore_xgxs` driver **does** download the WC40 firmware + start
+  the uC, waits for PLL lock (confirmed locked), sets RX clock-compensation
+  (`RX66_CONTROL`) and per-lane `FIRMWARE_MODE`. So the gap is **not** a missing
+  init call — it's that the uC-driven **RX adaptation never converges to a 10G PCS
+  lock** (even in clean loopback). That is the Warpcore **firmware/host-cal** layer
+  — exactly the wall `project_wc_fw_pause_protocol` hit on the 20G/QSFP side
+  (decoded the 0x820e/0xffe0 fw-pause + host-cal handshake but did not fully crack
+  the lane adaptation).
+
+**Conclusion:** the SFP+ 10G *link* is blocked by the Warpcore uC RX-adaptation,
+which neither OpenMDK (lacks it) nor the local OpenBCM tree (incomplete) can close,
+and which the prior QSFP effort could not fully solve either. Everything else is
+done and working: 48×1G copper (links + L2 55/55), SFP+ MAC@10G, 84758
+(speed/PCS/optical/laser per the open-source driver), modules/optics, Warpcore
+PLL+speed. Closing the 10G link would require a *complete* Broadcom SDK with the
+WC40 firmware-cal, or finishing the fw-pause/host-cal RE from the QSFP work.
 
 ## OpenMDK changes
 
