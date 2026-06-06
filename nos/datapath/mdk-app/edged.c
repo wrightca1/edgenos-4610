@@ -801,6 +801,7 @@ copper_up(int unit)
 #define X84_PMAD_CTRL2  0x0007   /* PMA/PMD control 2: PMA type (low nibble) */
 #define X84_SS_10G      0x2040   /* MII_CTRL_SS_MSB(b6) | SS_LSB(b13) = 10G */
 #define X84_PMA_TYPE_10G_LRM 0x8 /* PMA type field = 10GBASE-LRM */
+#define X84_RESET_CTRL  0xcd17   /* RESET_CONTROL_REGISTER: clear to enable the PCS */
 #define X84_RXLOS_OVERRIDE 0xc0c0
 #define X84_MODABS_OVERRIDE 0x0808
 #define X84_RXLOS_LVL   (1u << 9)
@@ -833,6 +834,12 @@ sfp_tx_enable(int unit)
         cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_PMAD_CTRL2, &v);
         cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_PMAD_CTRL2,
                             (v & ~0xfu) | X84_PMA_TYPE_10G_LRM);
+
+        /* (0b) ENABLE THE PCS: clear 1.0xcd17 (RESET_CONTROL_REGISTER). In multi-
+         * port (4x10G, single-lane) mode the 84758 holds the media PCS in reset
+         * until this is cleared — the step OpenMDK omits that pins the media PMD
+         * off (sd=0) and stops 10GBASE-R block-lock. (robo2 phy_84740_init.) */
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_RESET_CTRL, 0);
 
         /* (1) OPTICAL_CFG override + MOD_PRESENCE (ignore the pins, drive present). */
         cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &v);

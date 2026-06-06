@@ -92,14 +92,22 @@ PMD detects no valid signal** (`sd=0`) so the 10GBASE-R PCS never block-locks.
 Also ported from robo2: the 10G PMA `speed_set` (`1.0000=0x2040`, `1.0007` PMA-type
 `10G_LRM`) — OpenMDK omits even that.
 
-What's missing is the rest of the **robo2 `phy_84740_init` datapath bring-up**: the
-retimer/medium mode, the system↔media PCS linkage, and the internal **Warpcore 10G
-lane lock** that feeds valid 10G into the 84758 (open-source `phy_84740_link_get`:
-84758 link = 84758-PMD AND Warpcore-serdes link). This is the same per-lane
-RX-calibration layer as the 40G QSFP work (OpenMDK lacks `independent_lane_init`).
-The full robo2 driver (`phy84740.c` + `phy84740.h` in
-`phy84758-src/broadcom-official/`) is the reference; porting its `init` datapath
-sequence (+ verifying the Warpcore lock) is the next focused effort.
+The 84758-side `phy_84740_init` steps are now ported into `sfp_tx_enable()` from
+the open-source driver — all confirmed to take on-box:
+- 10G PMA `speed_set`: `1.0000=0x2040` (speed-select), `1.0007`=PMA-type `10G_LRM`.
+- **PCS enable**: clear `1.0xcd17` (RESET_CONTROL_REGISTER) — in multi-port
+  (4×10G) mode the 84758 holds its media PCS in reset until this is cleared.
+- optical override (`c8e4`) + levels (`c800` b8/b9) + TX-enable (the `c800[7]`
+  TxOnOff strap).
+
+Yet the media PMD still reads `sd=0` and no register on the 84758 moves it — so
+the gate is **upstream of the 84758**: it isn't being fed valid 10G from the
+internal **Warpcore SerDes** (link = 84758-PMD AND Warpcore-serdes per the
+open-source `link_get`). That is the same per-lane RX-calibration layer as the 40G
+QSFP work (OpenMDK lacks `independent_lane_init`). Verifying/bringing up the
+Warpcore 10G lane lock is the remaining effort; the full robo2 driver
+(`phy84740.c`/`.h` in `phy84758-src/broadcom-official/`) is the 84758-side
+reference and `project_qsfp_persist_and_eq` is the Warpcore-side reference.
 
 ## OpenMDK changes
 
