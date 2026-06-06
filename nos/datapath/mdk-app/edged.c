@@ -1307,7 +1307,28 @@ main(int argc, char *argv[])
     /* Turn the SFP+ optical transmitters on (OpenMDK's bcm84740 driver leaves the
      * 84758 holding the SFP TX_DISABLE pin asserted). Without this the laser is off
      * and the link partner sees RX_LOS. */
-    sfp_tx_enable(unit);
+    /* Configure-then-enable, replicating ICOS's order. KEY FINDING (ICOS capture
+     * 2026-06-06): edged's media-RX stuck state (sd=0, block-lock=0) is EXACTLY
+     * ICOS's port-DOWN state, and an ICOS `port en=1` re-locks it in <1s. edged
+     * had enabled the port (bmd_port_mode_set) BEFORE configuring the optics, so the
+     * 84758 enabled with no valid media config and latched down. Mirror ICOS:
+     * (1) DISABLE the SFP+ ports, (2) configure optics while down (sfp_tx_enable),
+     * (3) ENABLE -> the PHY brings up the media RX with the config already in place. */
+    {
+        int xp;
+        LOG("SFP+ media-RX bring-up: disable -> optical config -> enable (ICOS order)");
+        for (xp = SFP_LO; xp <= SFP_HI; xp++)
+            bmd_port_mode_set(unit, xp, bmdPortModeDisabled, 0);
+        { struct timespec ts = { .tv_sec = 0, .tv_nsec = 200*1000*1000 }; nanosleep(&ts, NULL); }
+
+        sfp_tx_enable(unit);   /* configure 84758 optics/levels while the port is down */
+
+        { struct timespec ts = { .tv_sec = 0, .tv_nsec = 200*1000*1000 }; nanosleep(&ts, NULL); }
+        for (xp = SFP_LO; xp <= SFP_HI; xp++) {
+            int prc = bmd_port_mode_set(unit, xp, bmdPortMode10000XFI, 0);
+            if (prc < 0) bmd_port_mode_set(unit, xp, bmdPortMode10000SFI, 0);
+        }
+    }
 
     LOG("data plane UP: BCM56340 initialized, switching-ready, ports forwarding");
 
