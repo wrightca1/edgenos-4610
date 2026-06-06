@@ -204,19 +204,36 @@ umount /mnt/dcss
 - Confirm: `show version` → `Accton AS4610-54T, 3.4.3.7`, SN `EC2025000934`,
   `BCM56340_A0`. ✅
 
-## 6. Return to ONL/edged afterward
-Reinstall the saved SWI via ONIE, then re-push edged:
-```sh
-# boot ONIE install mode (from U-Boot: 'run onie_uninstall' then 'run onie_install',
-# or from ICOS/ONIE 'onie-nos-install <swi>'), pointing at the pulled SWI.
-# After ONL boots, recover mgmt over serial (the SWI reverts ma1 IP + sshd each boot):
-ip addr add 10.1.1.209/24 dev ma1; ip link set ma1 up
-echo 'PermitRootLogin yes'        >> /etc/ssh/sshd_config
-echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config
-/etc/init.d/ssh restart
-# re-push the daemon (tmpfs, wiped on reboot):
-scp nos/datapath/mdk-app/edged root@10.1.1.209:/tmp/edged
-```
+## 6. Return to ONL/edged afterward (VERIFIED 2026-06-06)
+Reinstall the EdgeNOS/ONL **ONIE installer** (`backup/onie-installer`, 155 MB — wraps
+`ONL-master_..._ARMHF.swi`) and re-push edged. Get into **ONIE rescue** the same way as
+§1–2 (reboot → catch U-Boot `accton_as4610-54->` → `run onie_rescue`; re-add pubkey,
+`scp -O` the installer to `/tmp`).
+
+- **GOTCHA — run `onie-nos-install` from the SERIAL CONSOLE, not over SSH.** Over SSH the
+  installer body runs on the console (you only see `line 454: reboot: not found` +
+  `Failure: Unable to install image` in the SSH session, and the disk is **not** touched).
+  From the serial console it runs fully and **works as-is** (no need to symlink `reboot`):
+  ```sh
+  # on the ONIE serial console:
+  onie-nos-install /tmp/onie-installer
+  ```
+  It extracts the loader/initrd, repartitions to the ONL 4-partition layout
+  (ONL-BOOT/CONFIG/IMAGES/DATA), unpacks the SWI, regenerates PKI, and **reboots itself
+  into ONL** (the console-env `reboot` is present). ~3–4 min total.
+- After ONL boots, recover mgmt over serial (the SWI reverts ma1 IP + sshd each boot):
+  ```sh
+  ip addr add 10.1.1.209/24 dev ma1; ip link set ma1 up
+  grep -q '^PermitRootLogin yes' /etc/ssh/sshd_config || echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config
+  grep -q '^PasswordAuthentication yes' /etc/ssh/sshd_config || echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config
+  /etc/init.d/ssh restart        # login root/onl
+  ```
+- Re-push the daemon (tmpfs, wiped on reboot) and bring the data plane up:
+  ```sh
+  scp nos/datapath/mdk-app/edged root@10.1.1.209:/tmp/edged   # then: /tmp/edged
+  ```
+  Expect: 48 copper bound bcm54282, L2 55/55, inventory 4×10G, 84758 ucode `0x600d`,
+  `data plane UP`. (The `cpld write 0x07` warning is benign — chip still comes up fully.)
 
 ## Reboot-recovery quick card (applies to ONL boots in general)
 Every ONL/EdgeNOS reboot on this box reverts two things (no persistent config):
