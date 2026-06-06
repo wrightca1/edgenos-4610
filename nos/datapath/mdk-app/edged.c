@@ -67,6 +67,7 @@ union i2c_smbus_data {
 #include <bmd/bmd.h>
 #include <bmd/bmd_phy.h>
 #include <bmd/bmd_phy_ctrl.h>
+#include <bmd/bmd_device.h>   /* BMD_PORT_STATUS / BMD_PST_FORCE_LINK (SFP+ link force) */
 
 #include <phy_config.h>
 #include <phy/phy.h>
@@ -1184,6 +1185,34 @@ sfp_full_reinit(int unit)
     }
 }
 
+/* Direct optical-link read for an SFP+ port (logical SFP_LO..SFP_HI -> 84758 at
+ * EBUS2|slot, slot = port - SFP_LO). OpenMDK's bmd_phy_link_get walks the cascaded
+ * chain and returns 0 for these ports (the 84740 latched-status read + Warpcore
+ * link_get both report 0 even when the optics are locked), so it can't drive the
+ * MAC up. We instead read the 84758 media side directly the same way --up-check
+ * does (and that read agrees byte-for-byte with a locked ICOS): PMD STAT1 (1.0001)
+ * link-alive bit2 AND PCS STAT1 (3.0001) link-alive bit2, with the latch-low double
+ * read, backed by the 10GBASE-R block-lock (3.0020 bit0). Returns 1 = optics up. */
+static int
+sfp_link_alive(int unit, int port)
+{
+    uint32_t addr = CDK_XGSM_MIIM_EBUS(2) | (uint32_t)(port - SFP_LO);
+    uint32_t pmd_st = 0, pcs_st = 0, blk = 0;
+
+    /* clear latched local-fault first (reg 8), then read STAT1 twice (bit2 is
+     * latch-low so the 1st read clears the latch, the 2nd reflects current). */
+    cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x0008, &pmd_st);
+    cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x0001, &pmd_st);
+    cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0x0001, &pmd_st);
+    cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0001, &pcs_st);
+    cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0001, &pcs_st);
+    cdk_xgsm_miim_read(unit, addr, (3 << 16) | 0x0020, &blk);   /* 10GBASE-R block-lock b0 */
+
+    /* Link up = media PMD sees light (PMD LA) AND the 10GBASE-R PCS is locked
+     * (PCS LA or block-lock). block-lock is the steadier indicator once locked. */
+    return ((pmd_st & 0x4) && ((pcs_st & 0x4) || (blk & 0x1))) ? 1 : 0;
+}
+
 static int
 parse_unit(const char *s, uint32_t *ven, uint32_t *dev, uint32_t *rev, uint32_t *base)
 {
@@ -1213,6 +1242,22 @@ control_loop(int unit)
             bmd_port_mode_t mode;
             uint32_t flags = 0;
             int up;
+
+            /* SFP+ ports: bmd_phy_link_get can't see the locked optics (returns 0
+             * down the cascaded 84740/Warpcore chain), so drive the BMD link state
+             * ourselves from the direct 84758 media read. BMD_PST_FORCE_LINK makes
+             * bmd_link_update skip the (broken) PHY read and trust BMD_PST_LINK_UP;
+             * bmd_port_mode_update then deasserts the XMAC soft-reset and sets the
+             * EPC_LINK_BMAP egress bit on the up-edge (and reverses both on down). */
+            if (port >= SFP_LO && port <= SFP_HI) {
+                if (sfp_link_alive(unit, port)) {
+                    BMD_PORT_STATUS_SET(unit, port,
+                                        BMD_PST_FORCE_LINK | BMD_PST_LINK_UP);
+                } else {
+                    BMD_PORT_STATUS_SET(unit, port, BMD_PST_FORCE_LINK);
+                    BMD_PORT_STATUS_CLR(unit, port, BMD_PST_LINK_UP);
+                }
+            }
 
             /* Let the BMD reconcile MAC config with current link status. */
             bmd_port_mode_update(unit, port);
@@ -1566,6 +1611,25 @@ main(int argc, char *argv[])
          * gap). Done last, after the serdes + optics are up. */
         { struct timespec ts = { .tv_sec = 0, .tv_nsec = 100*1000*1000 }; nanosleep(&ts, NULL); }
         sfp_edc_reacquire(unit);
+
+        /* One-shot SFP+ MAC reconcile: give the optics a moment to lock, then drive
+         * the BMD link state from the direct 84758 read so the XMAC un-resets and the
+         * EPC_LINK_BMAP egress bit is set — without this a non---keep run never
+         * forwards over the SFP+ ports (bmd_phy_link_get can't see the locked optics).
+         * The --keep control loop keeps re-checking; this makes the one-shot path work. */
+        { struct timespec ts = { .tv_sec = 2, .tv_nsec = 0 }; nanosleep(&ts, NULL); }
+        for (xp = SFP_LO; xp <= SFP_HI; xp++) {
+            int alive = sfp_link_alive(unit, xp);
+            if (alive) {
+                BMD_PORT_STATUS_SET(unit, xp, BMD_PST_FORCE_LINK | BMD_PST_LINK_UP);
+            } else {
+                BMD_PORT_STATUS_SET(unit, xp, BMD_PST_FORCE_LINK);
+                BMD_PORT_STATUS_CLR(unit, xp, BMD_PST_LINK_UP);
+            }
+            bmd_port_mode_update(unit, xp);
+            LOG("SFP+ port %d optical link %s -> MAC %s", xp,
+                alive ? "UP" : "down", alive ? "forwarding" : "held");
+        }
     }
 
     LOG("data plane UP: BCM56340 initialized, switching-ready, ports forwarding");
