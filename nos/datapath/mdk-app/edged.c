@@ -914,6 +914,14 @@ sfp_tx_enable(int unit)
         /* (2b) c82b = ICOS locked value 0x8a40 (edged previously left this default). */
         cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0xc82b, 0x8a40);
 
+        /* NOTE: a full ICOS-vs-edged register diff (2026-06-06) showed only 16 regs
+         * differ, ALL uC-managed RX-DSP/adaptation outputs or status (c804/c81f/c840/
+         * c842/c873-c87a/cd04/cd09/cd3d/c820/c848/c878). Forcing edged to write all of
+         * them to the ICOS values did NOT lock the media RX -> the lock is the dynamic
+         * uC adaptation PROCESS, not any static register value. So we do NOT write them
+         * (they're firmware outputs). The static CONFIG (c800/c8e4/c82b/c805/c701/cd17)
+         * already matches ICOS. */
+
         /* (3) Clear PMD global TX-disable (1.0009 b0) + GENSIG TX-disable (1.cd16 b3). */
         cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_TX_DISABLE, &v);
         cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_TX_DISABLE, v & ~0x1u);
@@ -1409,6 +1417,28 @@ main(int argc, char *argv[])
                         "the module (CPU i2c-mux/optoe path only)",
                         s, rc3 == -2 ? "BSC FAIL" : "timeout");
             }
+        }
+
+        /* Full 84758 line-side register dump (xe0, devad 1) for diffing against the
+         * ICOS LOCKED-state capture (dumps/icos_linked_2026_06_06/23-25). Same
+         * "cXXX: 0xYYYY" format. Ranges: c700-c73f, c800-c8ff, cd00-cd3f. The diff
+         * (ICOS != edged, and that robo2 phy84740 WRITES) is the missing media-RX
+         * config. e.g. c701 L2P lane map -- OpenMDK never sets it. */
+        if (1) {
+            uint32_t a = CDK_XGSM_MIIM_EBUS(2) | 0;   /* xe0 */
+            int rng, r;
+            static const struct { int lo, hi; } R[] = {
+                {0xc700,0xc73f}, {0xc800,0xc8ff}, {0xcd00,0xcd3f}
+            };
+            cdk_xgsm_miim_write(unit, a, (1<<16)|X84_AER_ADDR, 0);   /* lane 0, MMF set earlier */
+            LOG("=== EDGED 84758 xe0 line-side dump (diff vs ICOS 23-25) ===");
+            for (rng = 0; rng < 3; rng++)
+                for (r = R[rng].lo; r <= R[rng].hi; r++) {
+                    uint32_t val = 0;
+                    cdk_xgsm_miim_read(unit, a, (1<<16)|r, &val);
+                    LOG("EDUMP %04x: 0x%04x", r, val & 0xffff);
+                }
+            LOG("=== end EDGED dump ===");
         }
 
         /* LOOPBACK ISOLATION of the WARPCORE CORE: engage the internal Warpcore's
