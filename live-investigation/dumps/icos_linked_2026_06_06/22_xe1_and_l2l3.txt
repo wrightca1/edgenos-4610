@@ -1,0 +1,89 @@
+
+##### CMD: phy xe1 0x1c800 #####
+phy xe1 0x1c800
+Port xe1 (PHY addr 0x41) DevAd 1(DEV_PMA_PMD) Reg 0x1c800: 0x3f3f
+Port xe1 (PHY addr 0x41) DevAd 2(DEV_WIS) Reg 0x1c800: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 3(DEV_PCS) Reg 0x1c800: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 4(DEV_PHYXS) Reg 0x1c800: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 5(DEV_DTEXS) Reg 0x1c800: 0xffff
+Port xe1 (PHY addr 0x41) DevAd 7(DEV_AN) Reg 0x1c800: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 30(DEV_USER) Reg 0x1c800: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe1 0x1c8e4 #####
+phy xe1 0x1c8e4
+Port xe1 (PHY addr 0x41) DevAd 1(DEV_PMA_PMD) Reg 0x1c8e4: 0xc8ef
+Port xe1 (PHY addr 0x41) DevAd 2(DEV_WIS) Reg 0x1c8e4: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 3(DEV_PCS) Reg 0x1c8e4: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 4(DEV_PHYXS) Reg 0x1c8e4: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 5(DEV_DTEXS) Reg 0x1c8e4: 0xffff
+Port xe1 (PHY addr 0x41) DevAd 7(DEV_AN) Reg 0x1c8e4: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 30(DEV_USER) Reg 0x1c8e4: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe1 0x1c82b #####
+phy xe1 0x1c82b
+Port xe1 (PHY addr 0x41) DevAd 1(DEV_PMA_PMD) Reg 0x1c82b: 0x8a40
+Port xe1 (PHY addr 0x41) DevAd 2(DEV_WIS) Reg 0x1c82b: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 3(DEV_PCS) Reg 0x1c82b: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 4(DEV_PHYXS) Reg 0x1c82b: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 5(DEV_DTEXS) Reg 0x1c82b: 0xffff
+Port xe1 (PHY addr 0x41) DevAd 7(DEV_AN) Reg 0x1c82b: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 30(DEV_USER) Reg 0x1c82b: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe1 0x1000a #####
+phy xe1 0x1000a
+Port xe1 (PHY addr 0x41) DevAd 1(DEV_PMA_PMD) Reg 0x1000a: 0x0001
+Port xe1 (PHY addr 0x41) DevAd 2(DEV_WIS) Reg 0x1000a: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 3(DEV_PCS) Reg 0x1000a: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 4(DEV_PHYXS) Reg 0x1000a: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 5(DEV_DTEXS) Reg 0x1000a: 0xffff
+Port xe1 (PHY addr 0x41) DevAd 7(DEV_AN) Reg 0x1000a: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 30(DEV_USER) Reg 0x1000a: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe1 0x30020 #####
+phy xe1 0x30020
+Port xe1 (PHY addr 0x41) DevAd 1(DEV_PMA_PMD) Reg 0x30020: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 2(DEV_WIS) Reg 0x30020: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 3(DEV_PCS) Reg 0x30020: 0x100d
+Port xe1 (PHY addr 0x41) DevAd 4(DEV_PHYXS) Reg 0x30020: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 5(DEV_DTEXS) Reg 0x30020: 0xffff
+Port xe1 (PHY addr 0x41) DevAd 7(DEV_AN) Reg 0x30020: 0x0000
+Port xe1 (PHY addr 0x41) DevAd 30(DEV_USER) Reg 0x30020: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: vlan show #####
+vlan show
+vlan 1	ports cpu,ge25,ge46,xe0-xe1 (0x000000000000000000000000000000000000000000000000000c800004000001), untagged ge25,ge46,xe0-xe1 (0x000000000000000000000000000000000000000000000000000c800004000000) MCAST_FLOOD_UNKNOWN
+vlan 4094	ports cpu (0x0000000000000000000000000000000000000000000000000000000000000001), untagged none (0x0000000000000000000000000000000000000000000000000000000000000000) MCAST_FLOOD_UNKNOWN
+BCM.0> 
+BCM.0> 
+##### CMD: l2 show #####
+l2 show
+mac=04:f8:f8:15:a8:41 vlan=1 GPORT=0x0 modid=0 port=0/cpu0 Static CPU
+mac=04:f8:f8:15:a8:43 vlan=4094 GPORT=0x0 modid=0 port=0/cpu0 Static CPU
+mac=00:10:18:ff:ff:ff vlan=1 GPORT=0x0 modid=0 port=0/cpu0 Static CPU
+BCM.0> 
+BCM.0> 
+##### CMD: l3 intf show #####
+l3 intf show
+Free L3INTF entries: 8190
+Unit  Intf  VRF Group VLAN    Source Mac     MTU TTL Tunnel InnerVlan  NATRealm
+------------------------------------------------------------------
+0     1     0     0     4094 04:f8:f8:15:a8:43  12284 0    0     0     0    
+BCM.0> 
+BCM.0> 
+##### CMD: l3 egress show #####
+l3 egress show
+Entry  Mac                 Vlan INTF PORT MOD MPLS_LABEL ToCpu Drop RefCount L3MC
+100128  04:f8:f8:15:a8:43 4094    1     0    0        -1   no   no    0   no
+BCM.0> 
+BCM.0> 
+##### CMD: l3 defip show #####
+l3 defip show
+Unit 0, Total Number of DEFIP entries: 16384
+#     VRF     Net addr             Next Hop Mac        INTF MODID PORT PRIO CLASS HIT VLAN
+BCM.0> 
+BCM.0> 

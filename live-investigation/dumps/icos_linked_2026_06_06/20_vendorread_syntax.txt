@@ -1,0 +1,30 @@
+
+##### CMD: phy raw c45 xe0 0x1 0xc8e4 #####
+py raw c45 xe0 0x1 0xc8e4
+Unknown command: py
+BCM.0> 
+BCM.0> 
+##### CMD: phy raw xe0 0x1 0xc8e4 #####
+phy raw xe0 0x1 0xc8e4
+BCM.0> 
+BCM.0> 
+##### CMD: phy raw xe0 1 0x1c8e4 #####
+phy raw xe0 1 0x1c8e4
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 0x1c8e4 #####
+phy xe0 0x1c8e4
+Port xe0 (PHY addr 0x40) DevAd 1(DEV_PMA_PMD) Reg 0x1c8e4: 0xc8ef
+Port xe0 (PHY addr 0x40) DevAd 2(DEV_WIS) Reg 0x1c8e4: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 3(DEV_PCS) Reg 0x1c8e4: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 4(DEV_PHYXS) Reg 0x1c8e4: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 5(DEV_DTEXS) Reg 0x1c8e4: 0xffff
+Port xe0 (PHY addr 0x40) DevAd 7(DEV_AN) Reg 0x1c8e4: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 30(DEV_USER) Reg 0x1c8e4: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phymod raw get xe0 0x1c8e4 #####
+phymod raw get xe0 0x1c8e4
+Unknown command: phymod
+BCM.0> 
+BCM.0> 

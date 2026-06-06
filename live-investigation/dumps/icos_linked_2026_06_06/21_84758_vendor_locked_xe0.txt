@@ -1,0 +1,155 @@
+
+##### CMD: phy xe0 0x1c8e4 #####
+phy xe0 0x1c8e4
+Port xe0 (PHY addr 0x40) DevAd 1(DEV_PMA_PMD) Reg 0x1c8e4: 0xc8ef
+Port xe0 (PHY addr 0x40) DevAd 2(DEV_WIS) Reg 0x1c8e4: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 3(DEV_PCS) Reg 0x1c8e4: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 4(DEV_PHYXS) Reg 0x1c8e4: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 5(DEV_DTEXS) Reg 0x1c8e4: 0xffff
+Port xe0 (PHY addr 0x40) DevAd 7(DEV_AN) Reg 0x1c8e4: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 30(DEV_USER) Reg 0x1c8e4: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 0x1c800 #####
+phy xe0 0x1c800
+Port xe0 (PHY addr 0x40) DevAd 1(DEV_PMA_PMD) Reg 0x1c800: 0x3f3f
+Port xe0 (PHY addr 0x40) DevAd 2(DEV_WIS) Reg 0x1c800: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 3(DEV_PCS) Reg 0x1c800: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 4(DEV_PHYXS) Reg 0x1c800: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 5(DEV_DTEXS) Reg 0x1c800: 0xffff
+Port xe0 (PHY addr 0x40) DevAd 7(DEV_AN) Reg 0x1c800: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 30(DEV_USER) Reg 0x1c800: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 0x1c805 #####
+phy xe0 0x1c805
+Port xe0 (PHY addr 0x40) DevAd 1(DEV_PMA_PMD) Reg 0x1c805: 0x0070
+Port xe0 (PHY addr 0x40) DevAd 2(DEV_WIS) Reg 0x1c805: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 3(DEV_PCS) Reg 0x1c805: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 4(DEV_PHYXS) Reg 0x1c805: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 5(DEV_DTEXS) Reg 0x1c805: 0xffff
+Port xe0 (PHY addr 0x40) DevAd 7(DEV_AN) Reg 0x1c805: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 30(DEV_USER) Reg 0x1c805: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 0x1c820 #####
+phy xe0 0x1c820
+Port xe0 (PHY addr 0x40) DevAd 1(DEV_PMA_PMD) Reg 0x1c820: 0x6044
+Port xe0 (PHY addr 0x40) DevAd 2(DEV_WIS) Reg 0x1c820: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 3(DEV_PCS) Reg 0x1c820: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 4(DEV_PHYXS) Reg 0x1c820: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 5(DEV_DTEXS) Reg 0x1c820: 0xffff
+Port xe0 (PHY addr 0x40) DevAd 7(DEV_AN) Reg 0x1c820: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 30(DEV_USER) Reg 0x1c820: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 0x1cd16 #####
+phy xe0 0x1cd16
+Port xe0 (PHY addr 0x40) DevAd 1(DEV_PMA_PMD) Reg 0x1cd16: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 2(DEV_WIS) Reg 0x1cd16: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 3(DEV_PCS) Reg 0x1cd16: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 4(DEV_PHYXS) Reg 0x1cd16: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 5(DEV_DTEXS) Reg 0x1cd16: 0xffff
+Port xe0 (PHY addr 0x40) DevAd 7(DEV_AN) Reg 0x1cd16: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 30(DEV_USER) Reg 0x1cd16: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 0x1cd17 #####
+phy xe0 0x1cd17
+Port xe0 (PHY addr 0x40) DevAd 1(DEV_PMA_PMD) Reg 0x1cd17: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 2(DEV_WIS) Reg 0x1cd17: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 3(DEV_PCS) Reg 0x1cd17: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 4(DEV_PHYXS) Reg 0x1cd17: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 5(DEV_DTEXS) Reg 0x1cd17: 0xffff
+Port xe0 (PHY addr 0x40) DevAd 7(DEV_AN) Reg 0x1cd17: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 30(DEV_USER) Reg 0x1cd17: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 0x1c806 #####
+phy xe0 0x1c806
+Port xe0 (PHY addr 0x40) DevAd 1(DEV_PMA_PMD) Reg 0x1c806: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 2(DEV_WIS) Reg 0x1c806: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 3(DEV_PCS) Reg 0x1c806: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 4(DEV_PHYXS) Reg 0x1c806: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 5(DEV_DTEXS) Reg 0x1c806: 0xffff
+Port xe0 (PHY addr 0x40) DevAd 7(DEV_AN) Reg 0x1c806: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 30(DEV_USER) Reg 0x1c806: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 0x1c710 #####
+phy xe0 0x1c710
+Port xe0 (PHY addr 0x40) DevAd 1(DEV_PMA_PMD) Reg 0x1c710: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 2(DEV_WIS) Reg 0x1c710: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 3(DEV_PCS) Reg 0x1c710: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 4(DEV_PHYXS) Reg 0x1c710: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 5(DEV_DTEXS) Reg 0x1c710: 0xffff
+Port xe0 (PHY addr 0x40) DevAd 7(DEV_AN) Reg 0x1c710: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 30(DEV_USER) Reg 0x1c710: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 0x1c82b #####
+phy xe0 0x1c82b
+Port xe0 (PHY addr 0x40) DevAd 1(DEV_PMA_PMD) Reg 0x1c82b: 0x8a40
+Port xe0 (PHY addr 0x40) DevAd 2(DEV_WIS) Reg 0x1c82b: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 3(DEV_PCS) Reg 0x1c82b: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 4(DEV_PHYXS) Reg 0x1c82b: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 5(DEV_DTEXS) Reg 0x1c82b: 0xffff
+Port xe0 (PHY addr 0x40) DevAd 7(DEV_AN) Reg 0x1c82b: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 30(DEV_USER) Reg 0x1c82b: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 0x1c81d #####
+phy xe0 0x1c81d
+Port xe0 (PHY addr 0x40) DevAd 1(DEV_PMA_PMD) Reg 0x1c81d: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 2(DEV_WIS) Reg 0x1c81d: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 3(DEV_PCS) Reg 0x1c81d: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 4(DEV_PHYXS) Reg 0x1c81d: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 5(DEV_DTEXS) Reg 0x1c81d: 0xffff
+Port xe0 (PHY addr 0x40) DevAd 7(DEV_AN) Reg 0x1c81d: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 30(DEV_USER) Reg 0x1c81d: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 0x1ffff #####
+phy xe0 0x1ffff
+Port xe0 (PHY addr 0x40) DevAd 1(DEV_PMA_PMD) Reg 0x1ffff: 0x0004
+Port xe0 (PHY addr 0x40) DevAd 2(DEV_WIS) Reg 0x1ffff: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 3(DEV_PCS) Reg 0x1ffff: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 4(DEV_PHYXS) Reg 0x1ffff: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 5(DEV_DTEXS) Reg 0x1ffff: 0xffff
+Port xe0 (PHY addr 0x40) DevAd 7(DEV_AN) Reg 0x1ffff: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 30(DEV_USER) Reg 0x1ffff: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 0x1000a #####
+phy xe0 0x1000a
+Port xe0 (PHY addr 0x40) DevAd 1(DEV_PMA_PMD) Reg 0x1000a: 0x0001
+Port xe0 (PHY addr 0x40) DevAd 2(DEV_WIS) Reg 0x1000a: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 3(DEV_PCS) Reg 0x1000a: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 4(DEV_PHYXS) Reg 0x1000a: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 5(DEV_DTEXS) Reg 0x1000a: 0xffff
+Port xe0 (PHY addr 0x40) DevAd 7(DEV_AN) Reg 0x1000a: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 30(DEV_USER) Reg 0x1000a: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 0x1ca1c #####
+phy xe0 0x1ca1c
+Port xe0 (PHY addr 0x40) DevAd 1(DEV_PMA_PMD) Reg 0x1ca1c: 0x600d
+Port xe0 (PHY addr 0x40) DevAd 2(DEV_WIS) Reg 0x1ca1c: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 3(DEV_PCS) Reg 0x1ca1c: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 4(DEV_PHYXS) Reg 0x1ca1c: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 5(DEV_DTEXS) Reg 0x1ca1c: 0xffff
+Port xe0 (PHY addr 0x40) DevAd 7(DEV_AN) Reg 0x1ca1c: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 30(DEV_USER) Reg 0x1ca1c: 0xffff
+BCM.0> 
+BCM.0> 
+##### CMD: phy xe0 0x30020 #####
+phy xe0 0x30020
+Port xe0 (PHY addr 0x40) DevAd 1(DEV_PMA_PMD) Reg 0x30020: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 2(DEV_WIS) Reg 0x30020: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 3(DEV_PCS) Reg 0x30020: 0x100d
+Port xe0 (PHY addr 0x40) DevAd 4(DEV_PHYXS) Reg 0x30020: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 5(DEV_DTEXS) Reg 0x30020: 0xffff
+Port xe0 (PHY addr 0x40) DevAd 7(DEV_AN) Reg 0x30020: 0x0000
+Port xe0 (PHY addr 0x40) DevAd 30(DEV_USER) Reg 0x30020: 0xffff
+BCM.0> 
+BCM.0> 
