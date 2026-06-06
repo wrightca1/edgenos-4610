@@ -77,3 +77,22 @@ Box is iterable on edged for all of this (no reflash needed for PHY work).
 - soc/phy/phy84740.c: 1486 init-disables-TX; 1552-1621 optical cfg; 1640 init squelch(TRUE); 2587 enable_set; 975-991 squelch; 5035/5096/5126 speed_set
 - soc/phy/wc40.c: 3861 enable(power-up); 4280 ind_speed_set; 4366-4369/4456-4460 RX/TX-ASIC reset cycle; 672/724-808 0x820e fw handshake
 - soc/esw/helix4.c: 3500 (wc40 fw helper only; uses TR3 port path)
+
+## CONFIRMED SPECIFIC GAP (2026-06-06) — the Warpcore 0x820e fw-pause handshake
+Read OpenMDK's `bcmi_warpcore_xgxs_drv.c`: `_warpcore_serdes_stop` (:386) only
+power-downs TX via LANECTRL3, and the firmware-mode set (:1255+) writes FIRMWARE_MODE
+directly. **Neither does the UC_CTRL (0x820e) STOP -> set-mode -> RESUME -> RESTART
+handshake** (poll READY_FOR_CMD bit7, 1ms delays) that the SDK's
+`_phy_wc40_firmware_mode_set` does (wc40.c:672, 724-808). The SDK trace explicitly
+noted skipping this handshake yields OUR EXACT symptom: "system side locking but the
+media side never adapting" = Warpcore RXlink=1 (we have this) + 84758 media sd=0.
+This is ALSO the same handshake decoded on the AS5610 (project_wc_fw_pause_protocol /
+docs/WC_FIRMWARE_PAUSE_PROTOCOL.md).
+
+### NEXT ACTION (implement in edged, test live — no reflash):
+Implement the Warpcore 0x820e UC_CTRL fw-pause/host-cal handshake around the XFI
+firmware-mode set: STOP (write UC_CTRL stop, poll READY_FOR_CMD) -> set FIRMWARE_MODE
+for the lane -> RESUME -> RESTART, re-arming the RX DSC/EQ. Two reference impls to
+follow: SDK wc40.c:672+724-808, and the 5610 decode in docs/WC_FIRMWARE_PAUSE_PROTOCOL.md.
+Apply per-SFP+-lane after the Warpcore speed-set, then re-check 84758 media sd / PCS
+block-lock. This is the leading (doubly-referenced) candidate to finally lock the link.
