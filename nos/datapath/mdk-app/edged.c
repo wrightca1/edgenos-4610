@@ -960,6 +960,73 @@ sfp_tx_enable(int unit)
     }
 }
 
+/* Warpcore UC_CTRL (0x820e) fw-pause/host-cal RE-ARM, ported from the full XGS SDK
+ * _phy_wc40_firmware_mode_set (sdk-xgs-robo-6.4.1 wc40.c:724-808) + the AS5610 decode
+ * (docs/WC_FIRMWARE_PAUSE_PROTOCOL.md). OpenMDK's bcmi_warpcore_xgxs sets FIRMWARE_MODE
+ * but NEVER performs the STOP->set-mode->RESUME->RESTART uC handshake, so the Warpcore
+ * RX DSC/EQ is never re-armed for the XFI link: it coarse-locks (PCS RXlink=1) but the
+ * EQ doesn't converge, and the 84758 media side (seeing a marginal WC<->84758 link)
+ * never adapts (sd=0). This re-arms it, per SFP+ Warpcore lane.
+ *   UC_CTRL 0x5000820e: [15:8]=SUPPLEMENT_INFO(cmd 0=stop,2=resume,3=restart),
+ *                       b7=READY_FOR_CMD, [3:0]=GP_UC_REQ(=1 to issue).
+ *   FIRMWARE_MODE 0x501081f2: LN<lane>_MODE = 4 bits at (4*lane); 0=DEFAULT (XFI). */
+#define WC_UC_CTRL_REG  0x5000820e
+#define WC_FW_MODE_REG  0x501081f2
+#define WC_UC_READY     (1u << 7)
+
+static int
+wc_uc_wait_ready(phy_ctrl_t *wc)
+{
+    int i;
+    uint32_t v = 0;
+    struct timespec ms = { .tv_sec = 0, .tv_nsec = 1000000 };  /* 1ms */
+    for (i = 0; i < 300; i++) {
+        phy_aer_iblk_read(wc, WC_UC_CTRL_REG, &v);
+        if (v & WC_UC_READY) return 0;
+        nanosleep(&ms, NULL);
+    }
+    return -1;
+}
+
+static void
+wc_uc_cmd(phy_ctrl_t *wc, uint32_t supplement)
+{
+    uint32_t v = 0;
+    struct timespec ms = { .tv_sec = 0, .tv_nsec = 1000000 };  /* 1ms */
+    phy_aer_iblk_read(wc, WC_UC_CTRL_REG, &v);
+    v = (v & ~0xff0fu) | ((supplement & 0xff) << 8) | 0x1;     /* SUPPLEMENT_INFO + GP_UC_REQ=1 */
+    phy_aer_iblk_write(wc, WC_UC_CTRL_REG, v);
+    nanosleep(&ms, NULL);
+    wc_uc_wait_ready(wc);
+}
+
+/* Re-arm the Warpcore RX adaptation for one SFP+ port via the uC fw-pause handshake. */
+static int
+warpcore_fw_rearm(int unit, int port)
+{
+    phy_ctrl_t *pc, *wc = NULL;
+    uint32_t v = 0;
+    int lane;
+    for (pc = BMD_PORT_PHY_CTRL(unit, port); pc != NULL; pc = pc->next) {
+        if (pc->drv && pc->drv->drv_name &&
+            !strcmp(pc->drv->drv_name, "bcmi_warpcore_xgxs")) { wc = pc; break; }
+    }
+    if (!wc) return -1;
+    lane = PHY_CTRL_INST(wc) & 0x3;
+    if (wc_uc_wait_ready(wc) < 0) {
+        LOG("  port %d: Warpcore uC not ready (pre) — skip re-arm", port);
+        return -1;
+    }
+    wc_uc_cmd(wc, 0);                                          /* STOP */
+    phy_aer_iblk_read(wc, WC_FW_MODE_REG, &v);                 /* set FW mode = DEFAULT (XFI) */
+    v &= ~(0xfu << (4 * lane));
+    phy_aer_iblk_write(wc, WC_FW_MODE_REG, v);
+    wc_uc_cmd(wc, 2);                                          /* RESUME */
+    wc_uc_cmd(wc, 3);                                          /* RESTART */
+    LOG("  port %d: Warpcore fw-pause re-arm (lane %d) done", port, lane);
+    return 0;
+}
+
 static int
 parse_unit(const char *s, uint32_t *ven, uint32_t *dev, uint32_t *rev, uint32_t *base)
 {
@@ -1328,6 +1395,14 @@ main(int argc, char *argv[])
             int prc = bmd_port_mode_set(unit, xp, bmdPortMode10000XFI, 0);
             if (prc < 0) bmd_port_mode_set(unit, xp, bmdPortMode10000SFI, 0);
         }
+
+        /* Warpcore RX re-arm: the uC fw-pause handshake OpenMDK omits (the confirmed
+         * gap — see SFP10G_BRINGUP_ROADMAP.md). Done AFTER the serdes is at 10G so the
+         * uC re-runs RX DSC/EQ adaptation for the XFI link. */
+        { struct timespec ts = { .tv_sec = 0, .tv_nsec = 200*1000*1000 }; nanosleep(&ts, NULL); }
+        LOG("SFP+ Warpcore fw-pause RX re-arm (UC_CTRL 0x820e STOP/RESUME/RESTART):");
+        for (xp = SFP_LO; xp <= SFP_HI; xp++)
+            warpcore_fw_rearm(unit, xp);
     }
 
     LOG("data plane UP: BCM56340 initialized, switching-ready, ports forwarding");
