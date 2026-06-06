@@ -69,11 +69,22 @@ see light.
 ## What's left: the optical PCS lock
 
 With the MAC at 10G, lasers on, light flowing, and compatible modules (both
-1310nm LC), the 84758 still reports `sigdet=0` / no 10GBASE-R block-lock. This is
-the **Warpcore 10G SerDes lock / 84758 media-RX** layer — the same per-lane
-RX-calibration gap documented for the 40G QSFP work (OpenMDK lacks the full SDK's
-`independent_lane_init`). It is no longer a port-config problem; it's the SerDes
-physical-layer lock, and is the next focused effort.
+1310nm dual-fiber LR — see `../../live-investigation/dumps/sfp_eeprom_dom_2026_06_06.md`),
+the 84758 still reports `sigdet=0` / no 10GBASE-R block-lock.
+
+The 84758 **optical-signal config is now faithful to the real driver**: the
+register map was pulled from the open-source robo2-xsdk `phy84740.h`, which fixed
+two of our guesses — `OPTICAL_SIG_LVL = 0xc800` (not 0xc8e5) and the level masks
+`RXLOS_LVL=b9 / MOD_ABS_LVL=b8`. `sfp_tx_enable()` now sets the c8e4 override **and**
+the c800 levels (OpenMDK omits the latter, which had pinned `sigdet=0`).
+
+But that alone doesn't lock the link: the open-source `phy_84740_link_get` shows
+**84758 link = (84758 PMD link) AND (internal Warpcore SerDes link)** — so the
+gate is now the **Warpcore 10G lane lock** (+ the 84758 system/media PCS at 10G),
+the same per-lane RX-calibration layer documented for the 40G QSFP work (OpenMDK
+lacks the full SDK's `independent_lane_init`). That SerDes physical-layer lock is
+the next focused effort. The full robo2 driver (`phy84740.c` + `phy84740.h`, kept
+local in `phy84758-src/broadcom-official/`) is the reference for it.
 
 ## OpenMDK changes
 

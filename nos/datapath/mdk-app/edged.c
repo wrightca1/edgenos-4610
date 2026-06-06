@@ -784,59 +784,75 @@ copper_up(int unit)
  * TX_DISABLE pin asserted (laser off -> RX_LOS at the link partner). Replicates
  * robo2-xsdk phy_84740_enable_set(enable=1): clear the IEEE PMD global TX-disable
  * (1.0009 bit0) + the 84740 GENSIG TX-disable (1.0x8071 bit3). */
-/* BCM84740-family optical-interface registers (PMA/PMD = devad 1), addresses
- * from the OpenMDK bcm84740/bcm8754 drivers + robo2-xsdk phy84740.c:
- *   1.0xc8e4 OPTICAL_CFG  : b3=MOD_PRESENCE, b4=lane power(0=on), b12=TxOn(0=on),
- *                           RXLOS override=0xc0c0, MOD_ABS override=0x0808
- *                           (OpenMDK writes 0xc8c8 = both overrides + present).
- *   1.0xc8e5 OPTICAL_SIG_LVL : RX_LOS / MOD_ABS level bits.
+/* BCM84740-family optical-interface registers (PMA/PMD = devad 1). Addresses +
+ * masks are VERBATIM from the robo2-xsdk phy84740.h (Broadcom source-available):
+ *   1.0xc8e4 OPTICAL_CFG : b3=MOD_PRESENCE, b4=lane power(0=on), b12=TxOn(0=on),
+ *                          RXLOS_OVERRIDE=0xc0c0, MOD_ABS_OVERRIDE=0x0808.
+ *   1.0xc800 OPTICAL_SIG_LVL : RXLOS_LVL=b9, MOD_ABS_LVL=b8, TxOnOff strap=b7.
  *   1.0x0009 PMD_TX_DISABLE  : b0=global PMD TX disable (0=on).
  *   1.0xcd16 GENSIG_8071     : b3=TX disable in LP/single mode (0=on).
  *   1.0xc702 AER_ADDR        : lane select (0 for these single-port SFP+). */
 #define X84_OPT_CFG     0xc8e4
-#define X84_OPT_SIGLVL  0xc8e5
+#define X84_OPT_SIGLVL  0xc800
 #define X84_TX_DISABLE  0x0009
 #define X84_GENSIG_8071 0xcd16
 #define X84_AER_ADDR    0xc702
+#define X84_RXLOS_OVERRIDE 0xc0c0
+#define X84_MODABS_OVERRIDE 0x0808
+#define X84_RXLOS_LVL   (1u << 9)
+#define X84_MODABS_LVL  (1u << 8)
+#define X84_MOD_PRESENCE (1u << 3)
 
+/* Port the robo2-xsdk phy84740 optical bring-up + enable_set for each SFP+ (xe0-3
+ * at EBUS2 0x80-0x83). OpenMDK's bcm84740 driver sets the c8e4 override but NEVER
+ * the c800 RXLOS/MOD_ABS *level* bits — so the overridden RX_LOS resolves to "LOS"
+ * and the media PCS pins sigdet=0. The full robo2 sequence: (1) c8e4 override +
+ * MOD_PRESENCE, (2) c800 set RXLOS_LVL|MOD_ABS_LVL so the override means "signal
+ * present / module present", (3) clear PMD/GENSIG TX-disable, (4) TxOnOff strap:
+ * c8e4[4] = strap XOR c800[7], toggle c800[7] to make c8e4[4]=0 (laser on). */
 static void
 sfp_tx_enable(int unit)
 {
     int s;
-    LOG("SFP+ 84758: optical TX-enable sequence (c8e4 override+present, "
-        "clear 1.0009 b0 / 1.cd16 b3) on xe0-3");
+    LOG("SFP+ 84758: robo2 optical bring-up (c8e4 override + c800 levels b8/b9 + "
+        "TX-enable) on xe0-3");
     for (s = 0; s < 4; s++) {
         uint32_t addr = CDK_XGSM_MIIM_EBUS(2) | s;
         uint32_t v = 0;
-        /* Point AER at lane 0 (single-port SFP+). */
-        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_AER_ADDR, 0);
-        /* OPTICAL_CFG: set both overrides (0xc0c0|0x0808) + MOD_PRESENCE (b3),
-         * and ensure TxOn (b12) + lane-power (b4) are ON (=0). = 0xc8c8. */
-        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_CFG, 0xc8c8);
-        /* Global PMD TX disable: clear b0. */
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_AER_ADDR, 0);  /* lane 0 */
+
+        /* (1) OPTICAL_CFG override + MOD_PRESENCE (ignore the pins, drive present). */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &v);
+        v |= (X84_RXLOS_OVERRIDE | X84_MODABS_OVERRIDE | X84_MOD_PRESENCE);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_CFG, v);
+
+        /* (2) OPTICAL_SIG_LVL: set RXLOS_LVL (b9) + MOD_ABS_LVL (b8) so the
+         * overridden RX_LOS/MOD_ABS resolve to "signal present / module present".
+         * THIS is what OpenMDK omits and why sigdet stayed 0. */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_SIGLVL, &v);
+        v |= (X84_RXLOS_LVL | X84_MODABS_LVL);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_SIGLVL, v);
+
+        /* (3) Clear PMD global TX-disable (1.0009 b0) + GENSIG TX-disable (1.cd16 b3). */
         cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_TX_DISABLE, &v);
         cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_TX_DISABLE, v & ~0x1u);
-        /* GENSIG TX disable (LP/single-port path): clear b3. */
         cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_GENSIG_8071, &v);
         cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_GENSIG_8071, v & ~0x8u);
-        /* TxOnOff strap workaround: c8e4[4] = TxOnOff_pin XOR c800[7]. When
-         * c8e4[4]=1 the TX is held in low-power (laser off). Toggle 0xc800[7] to
-         * drive c8e4[4] back to 0 (TX active). (robo2 phy_84740_enable_set.) */
+
+        /* Ensure TxOn (c8e4 b12) + lane power (c8e4 b4 — but it's strap-driven). */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_CFG, v & ~(1u << 12));
+
+        /* (4) TxOnOff strap: c8e4[4] = TxOnOff_pin XOR c800[7]. If c8e4[4]=1 (laser
+         * low-power/off), toggle c800[7] to flip it to 0 (TX active). */
         cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &v);
         if (v & (1u << 4)) {
             uint32_t c800 = 0;
-            cdk_xgsm_miim_read(unit, addr, (1 << 16) | 0xc800, &c800);
-            cdk_xgsm_miim_write(unit, addr, (1 << 16) | 0xc800,
+            cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_SIGLVL, &c800);
+            cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_SIGLVL,
                                 (c800 & (1u << 7)) ? (c800 & ~(1u << 7))
                                                    : (c800 | (1u << 7)));
         }
-        /* Clear the c8e4 RX_LOS override (0xc0c0) so the 84758 uses the REAL
-         * optical RX_LOS (now good: module rx_los=0, light present) instead of the
-         * driver-forced value that pins sigdet=0. Without this the media PCS never
-         * sees "signal present" and won't block-lock the incoming 10G. Keep the
-         * MOD_ABS override (0x0808) + TxOn/lane bits. */
-        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &v);
-        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_CFG, v & ~0xc0c0u);
     }
 }
 
