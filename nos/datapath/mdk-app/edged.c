@@ -814,6 +814,9 @@ copper_up(int unit)
 #define X84_BKPLANE_MODE (1u << 2)
 #define X84_REPEATER_DET 0xc81d  /* (b1|b2)=0x6 => repeater/retimer mode */
 #define X84_SQUELCH_CTL 0xcd18   /* devad 3 (PCS): RX squelch enable per speed */
+#define X84_EDC_MODE    0xca1a   /* EDC mode (media-RX adaptation); SR/LR optics = 0x44 */
+#define X84_EDC_SR_LR   0x44
+#define X84_EDC_MASK    0xff
 
 /* Read `count` bytes from i2c device `dev` (SFP EEPROM = 0x50) at `offset` via the
  * BCM84758's OWN 2-wire/BSC master (port s -> EBUS2|s, lane 0). Ports the robo2
@@ -1025,6 +1028,49 @@ warpcore_fw_rearm(int unit, int port)
     wc_uc_cmd(wc, 3);                                          /* RESTART */
     LOG("  port %d: Warpcore fw-pause re-arm (lane %d) done", port, lane);
     return 0;
+}
+
+/* 84758 media-RX RE-ACQUIRE via the EDC-mode programming sequence, ported from robo2
+ * _phy_84740_control_edc_mode_set (phy84740.c:3310). THE 84758-side analog of the
+ * Warpcore handshake: edged sets c800 bit9 (RXLOS_LVL = "signal present") STATICALLY
+ * from the start, so the 84758 uC never sees the LOS->present EDGE that triggers media-
+ * RX acquisition -> sd stays 0. This sequence: clear the c8e4 RX_LOS/MOD_ABS overrides,
+ * INDUCE a fake LOS (flip c800 b9), (re)program the EDC mode (0xca1a = 0x44 SR/LR),
+ * REMOVE the LOS (restore c800 b9), restore overrides -- forcing the uC to re-acquire
+ * the media RX. Per SFP+ port (quad-port, single lane). */
+static void
+sfp_edc_reacquire(int unit)
+{
+    int s;
+    struct timespec ms = { .tv_sec = 0, .tv_nsec = 5 * 1000 * 1000 };  /* 5ms */
+    LOG("SFP+ 84758 media-RX re-acquire (EDC LOS-toggle, robo2 edc_mode_set):");
+    for (s = 0; s < 4; s++) {
+        uint32_t addr = CDK_XGSM_MIIM_EBUS(2) | s;
+        uint32_t v = 0, c800 = 0;
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_AER_ADDR, 0);   /* lane 0 */
+        /* 1. clear RX_LOS/MOD_ABS overrides (real signalling during the sequence) */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_CFG,
+                            v & ~(X84_RXLOS_OVERRIDE | X84_MODABS_OVERRIDE));
+        /* 2. induce LOS: flip c800 bit9 (RXLOS_LVL) to its inverse */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_SIGLVL, &c800);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_SIGLVL,
+                            (c800 & ~X84_RXLOS_LVL) | ((~c800) & X84_RXLOS_LVL));
+        nanosleep(&ms, NULL);
+        /* 3. (re)program the EDC mode = SR/LR optics (0x44) */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_EDC_MODE, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_EDC_MODE,
+                            (v & ~X84_EDC_MASK) | X84_EDC_SR_LR);
+        nanosleep(&ms, NULL);
+        /* 4. remove LOS: restore c800 bit9 to its original value (signal "returns") */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_SIGLVL, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_SIGLVL,
+                            (v & ~X84_RXLOS_LVL) | (c800 & X84_RXLOS_LVL));
+        /* 5. restore the RX_LOS/MOD_ABS overrides */
+        cdk_xgsm_miim_read(unit, addr, (1 << 16) | X84_OPT_CFG, &v);
+        cdk_xgsm_miim_write(unit, addr, (1 << 16) | X84_OPT_CFG,
+                            v | X84_RXLOS_OVERRIDE | X84_MODABS_OVERRIDE);
+    }
 }
 
 static int
@@ -1403,6 +1449,12 @@ main(int argc, char *argv[])
         LOG("SFP+ Warpcore fw-pause RX re-arm (UC_CTRL 0x820e STOP/RESUME/RESTART):");
         for (xp = SFP_LO; xp <= SFP_HI; xp++)
             warpcore_fw_rearm(unit, xp);
+
+        /* 84758 media-RX re-acquire: the LOS-toggle/EDC sequence that gives the uC the
+         * LOS->present edge it needs to acquire the optical RX (the confirmed 84758-side
+         * gap). Done last, after the serdes + optics are up. */
+        { struct timespec ts = { .tv_sec = 0, .tv_nsec = 100*1000*1000 }; nanosleep(&ts, NULL); }
+        sfp_edc_reacquire(unit);
     }
 
     LOG("data plane UP: BCM56340 initialized, switching-ready, ports forwarding");
