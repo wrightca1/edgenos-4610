@@ -1,0 +1,14 @@
+--- enable debug-level SDK logging ---
+debug soc miim debug
+BCM.0> 
+BCM.0> 
+debug soc phymod debug
+BCM.0> 
+BCM.0> 
+debug soc phy debug
+BCM.0> 
+BCM.0> 
+--- flap xe0, idle-capture trace 20s ---
+port xe0 en=1
+BCM.0> 
+BCM.0> 
