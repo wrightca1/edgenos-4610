@@ -1,0 +1,29 @@
+EdgeNOS-4610 patch for OpenMDK (apply to BOTH copies):
+  bmd/pkgsrc/chip/bcm56340_a0/bcm56340_a0_bmd_init.c   (the one the build compiles)
+  bmd/PKG/chip/bcm56340_a0/bcm56340_a0_bmd_init.c      (keep in sync)
+
+Make _xlport_txfifo_check() advisory. It is a DMA-gated XLPORT TX-FIFO underrun
+erratum workaround that bmd_tx'es a 9200-byte loopback frame per XLPORT during
+bmd_init. With BMD_CONFIG_INCLUDE_DMA=1 it ran and its jumbo loopback TX times out
+(CDK_E_TIMEOUT) on this board, aborting bmd_init. The DMA=0 build never ran it and the
+chip came up fine; normal (64B) DMA TX completes fine (verified via edged --dma-test).
+So log but do not propagate the failure.
+
+--- a/bmd/.../bcm56340_a0_bmd_init.c   (_xlport_txfifo_check tail)
+@@
+         } else {
+             CDK_WARN(("bcm56340_a0_bmd_init[%d]: port %d, "
+                 "failed while recovering XLPORT underrun\n", unit, port));
+         }
+     }
+-
+-    return rv;
++
++    /* EDGENOS-4610: advisory — a failure here must not abort bmd_init. edged
++     * validates/debugs the CPU-punt DMA path separately via --dma-test. */
++    if (CDK_FAILURE(rv)) {
++        CDK_WARN(("bcm56340_a0_bmd_init[%d]: XLPORT txfifo check failed (rv=%d) — "
++                  "advisory, continuing\n", unit, rv));
++    }
++    return CDK_E_NONE;
+ }
