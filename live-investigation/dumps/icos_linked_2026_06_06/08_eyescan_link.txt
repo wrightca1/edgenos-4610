@@ -1,0 +1,7 @@
+
+##### CMD: phy diag xe0 link #####
+phy diag xe0 link
+            ^
+% Invalid input detected at '^' marker.
+
+(Routing) #

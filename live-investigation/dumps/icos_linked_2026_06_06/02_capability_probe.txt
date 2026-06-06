@@ -1,0 +1,40 @@
+
+##### CMD: debug soc #####
+debug soc
+-------- SOC --------
+Warn
+         100G 10G ALPM ARL ARLMON AVS CANCUN CHip 
+         CNM CNT COMMON COsq CounTeR DDR DIAG DMA 
+         DRAM EGRess ESM Evict FABric FifoDMA FlowControl FORWard 
+         FP GE General HAsh HeaDeRs HwLog I2C INGRess 
+         INIT INIT_PP INTr KNET L2 L2TABLE L3 LB 
+         LIF LInk LLP LPM M0 ManaGeMenT MBIST MCAST 
+         MEM MemTUNE METering MII MIIM MIRRor MMU MPLS 
+         MSG MultiCast OAM OTHER PACKET PacketDMA PCI PHY 
+         PHYMOD PHYSIM PKT POrt PPC PPD PTP RCPU 
+         REG RX Sat SChan SchanFIFO SER SHMOO SimEm 
+         SLB SOCMEM Stat STK STP SWDB TCAM TDM 
+         TESTS TRACE TRAP Trunk TX VLAN VSI XLMAC 
+
+BCM.0> 
+##### CMD: debug bcm #####
+debug bcm
+-------- BCM --------
+Warn
+         ALPM ARL ATTach AUth BENCHMARK BFD CES CNT 
+         COLLECTOR COMMON COsq CounTeR DMA ELPM EXTender FABric 
+         FAILover FCOE FLEXctr FLOW FLOWTRACKER FP GDPLL IFA 
+         INIT INIT_PP INTr IPFIX IPMC IPSEC KNET L2 
+         L2GRE L2TABLE L3 latency_monitor LB LInk MacSEC MCAST 
+         MEM MIM MIRRor MPLS MSG MultiCast NIV OAM 
+         OTHER PACKET PHY PKT POLicer POrt PSTATS PTP 
+         QOS RANGE RCPU Regex RX Sat Stat STG 
+         STK STP SUBPort SWItch TAS TELEMETRY TESTS TIME 
+         TRACE TRILL Trunk TSN TUNnel TX UDF UTILs 
+         VLAN VXLAN XFLOW_MacSEC 
+BCM.0> 
+BCM.0> 
+##### CMD: phy diag xe0 dump #####
+phy diag xe0 dump
+BCM.0> 
+BCM.0> 

@@ -1,0 +1,5 @@
+
+##### CMD: phy diag xe0 eyescan #####
+phy diag xe0 eyescan
+BCM.0> 
+BCM.0> 

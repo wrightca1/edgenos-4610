@@ -1,0 +1,33 @@
+--- enable trace sources ---
+debug soc miim verbose
+BCM.0> 
+debug soc phymod verbose
+BCM.0> 
+BCM.0> 
+debug soc phy verbose
+BCM.0> 
+BCM.0> 
+debug soc link verbose
+BCM.0> 
+BCM.0> 
+--- flap xe0: disable ---
+port xe0 en=0
+BCM.0> 
+BCM.0> 
+=== MARKER: enabling xe0 now, capturing async trace 18s ===
+port xe0 en=1
+BCM.0> 
+BCM.0> 
+--- disable trace ---
+debug soc miim off
+BCM.0> 
+BCM.0> 
+debug soc phymod off
+BCM.0> 
+BCM.0> 
+debug soc phy off
+BCM.0> 
+BCM.0> 
+debug soc link off
+BCM.0> 
+BCM.0> 

@@ -1,0 +1,12 @@
+
+##### CMD: debug #####
+debug
+Available layers:
+APPL APPLDNX BCM BCMAPI BCMDNX BCMX BOARD SAL SHARED SHAREDSWDNX SOC SOCDNX SWSTATEDNX SYS TKS 
+BCM.0> 
+BCM.0> 
+##### CMD: bsl #####
+bsl
+Unknown command: bsl
+BCM.0> 
+BCM.0> 

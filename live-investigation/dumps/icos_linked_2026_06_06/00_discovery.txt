@@ -1,0 +1,128 @@
+
+##### CMD: version #####
+version
+Broadcom Command Monitor: Copyright (c) 1998-no d Broadcom
+Release: unknown built no datestamp (no date)
+From unknown@unknown:unknown
+Platform: IPROC_CMICD
+OS: Unix (Posix)
+Chips:
+      
+      
+      
+      
+      
+      
+      
+      
+      
+       BCM56640_A0,
+      
+       BCM56850_A0,
+       BCM56340_A0,
+       BCM56860_A0, BCM56560_A0, BCM56560_B0,
+      
+      
+      
+      
+      
+PHYs:  BCM5218, BCM5220/21, BCM5226, BCM5228,
+    BCM5238, BCM5248, BCM5324/FE, BCM5348/FE,
+    BCM53242/FE, BCM53262/FE, BCM53101/FE, BCM53280/FE,
+    BCM53600/FE, BCM5400, BCM5401, BCM5402,
+    BCM5404, BCM5424/34, BCM5411, BCM5461,
+    BCM5464, BCM5466, BCM5478, BCM5488,
+    BCM54980, BCM54980, BCM54980, BCM54980,
+    BCM53314, BCM5482/801x, BCM54684, BCM54640,
+    BCM54682E, BCM54684E, BCM54685, BCM54616,
+    BCM54618E, BCM54618SE, BCM84707, BCM84073,
+    BCM84074, BCM84728, BCM84748, BCM84727,
+    BCM84747, BCM84762, BCM84764, BCM84042,
+    BCM84044, BCM8806X, BCM54182, BCM54185,
+    BCM54180, BCM54140, BCM54192, BCM54195,
+    BCM54190, BCM54194, BCM54210, BCM54220,
+    BCM54280, BCM54282, BCM54240, BCM54285
+    BCM5428X, BCM54290, BCM54292, BCM54294,
+    BCM54295, BCM54296, BCM5421S, BCM54680,
+    BCM53324, BCM53125, BCM53128, BCM53010,
+    BCM53018, BCM5302X, BCM53134, BCM56160-GPHY,
+    BCM53540-GPHY, BCM54880, BCM54881, BCM54810,
+    BCM54811, BCM89500, BCM54640E, BCM54880E,
+    BCM54680E, BCM52681E, BCM8703, BCM8704,
+    BCM8705/24/25, BCM8706/8726, BCM8727, BCM8728/8747,
+    BCM8072, BCM8073, BCM8074, BCM8040,
+    BCM8481X, BCM84812, BCM84821, BCM84822,
+    BCM84823, BCM84833, BCM84834, BCM84835,
+    BCM84836, BCM84844, BCM84846, BCM84848,
+    BCM84858, BCM84856, BCM84860, BCM84861,
+    BCM84864, BCM84868, BCM84888, BCM84884,
+    BCM84888E, BCM84884E, BCM84881, BCM84880,
+    BCM84888S, BCM84887, BCM84886, BCM84885
+    BCM8750, BCM8752, BCM8754, BCM84740,
+    BCM84164, BCM84758, BCM84780, BCM84784,
+    BCM84318, BCM84328, BCM84793, BCM82328,
+    Furia, Huracan, Sesto, Madura,
+    BCM82780, copper sfp
+   
+BCM.0> 
+##### CMD: ps #####
+ps
+                 ena/    speed/ link auto    STP                  lrn  inter   max  loop
+           port  link    duplex scan neg?   state   pause  discrd ops   face frame  back
+       ge0  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge1  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge2  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge3  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge4  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge5  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge6  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge7  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge8  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+       ge9  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge10  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge11  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge12  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge13  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge14  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge15  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge16  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge17  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge18  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge19  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge20  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge21  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge22  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge23  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge24  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge25  up      1G  FD   SW  Yes  Forward          None   FA  SGMII  1518     
+      ge26  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge27  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge28  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge29  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge30  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge31  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge32  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge33  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge34  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge35  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge36  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge37  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge38  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge39  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge40  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge41  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge42  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge43  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge44  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge45  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge46  up      1G  FD   SW  Yes    Block          None   FA  SGMII  1518     
+      ge47  down     -       SW  Yes  Disable  TX RX   None    D  SGMII  1518     
+      ge48  !ena    1G  FD   SW  No   Disable          None   FA   GMII 16356     
+       xe0  up     10G  FD   SW  No   Forward          None   FA  XGMII  1518     
+       xe1  up     10G  FD   SW  No     Block          None   FA  XGMII  1518     
+       xe2  down   10G  FD   SW  No   Disable          None    D  XGMII  1518     
+       xe3  down   10G  FD   SW  No   Disable          None    D  XGMII  1518     
+       xe4  down   20G  FD   SW  No   Disable          None    D  XGMII  1518     
+       xe5  down   20G  FD   SW  No   Disable          None    D  XGMII  1518     
+BCM.0> 
+BCM.0> 
