@@ -1970,11 +1970,18 @@ main(int argc, char *argv[])
             LOG("--rx-dump: resident RX active — flood-to-CPU on default VLAN; "
                 "waiting for frames (run under `timeout`, Ctrl-C to stop)");
         }
-        /* PASSIVE RX: ports 1/2 are now on real networks, so real ingress traffic
-         * (ARP/broadcast on the subnet) floods VLAN 1 to the CPU — no TX stimulus
-         * needed. Ports were set to STP forwarding + default-VLAN by the bring-up;
-         * the CPU is a default-VLAN member (bmd_switching_init) so broadcast/DLF
-         * frames arriving on a forwarding port reach our armed RX descriptor. */
+        /* The live copper link is CDK port 26 (front-panel port 1, on 10.14.1.0/24).
+         * Ensure it's VLAN 1 + forwarding, then TX a real broadcast ARP request out it
+         * for a likely host (10.14.1.254) — GE TX works, and any reply (or other
+         * device's broadcast) ingresses port 26 and floods to the CPU, proving RX.
+         * (Passive flood-to-CPU also works if the subnet has ambient broadcast.) */
+        dma_addr_t tbaddr = 0;
+        uint8_t *tbuf = rbuf ? bmd_dma_alloc_coherent(unit, 128, &tbaddr) : NULL;
+        int live_port = 26;
+        bmd_vlan_port_add(unit, 1, live_port, BMD_VLAN_PORT_F_UNTAGGED);
+        bmd_port_vlan_set(unit, live_port, 1);
+        bmd_port_stp_set(unit, live_port, bmdSpanningTreeForwarding);
+        LOG("--rx-dump: live port %d -> VLAN 1 + forwarding; will ARP-probe 10.14.1.254", live_port);
 
         /* Arm ONE RX descriptor up front. bmd_rx_poll clears it only on an actual
          * receive; on timeout it stays armed, so we re-arm only after a frame
@@ -1994,6 +2001,29 @@ main(int argc, char *argv[])
             while (armed) {
                 bmd_pkt_t *rp = NULL;
                 int rc2 = -1, k;
+
+                /* TX a broadcast ARP request out the live port (10.14.1.253 -> who-has
+                 * 10.14.1.254) as a deterministic trigger; on a busy net ambient
+                 * broadcast also arrives. A reply/any frame floods to CPU -> RX. */
+                if (tbuf) {
+                    bmd_pkt_t tp; int b;
+                    static const uint8_t sa[6] = {0x02,0xed,0x60,0x00,0x00,0x01};
+                    memset(tbuf, 0, 64);
+                    for (b = 0; b < 6; b++) tbuf[b] = 0xff;      /* DA bcast */
+                    memcpy(tbuf + 6, sa, 6);                      /* SA */
+                    tbuf[12]=0x08; tbuf[13]=0x06;                 /* ARP */
+                    tbuf[14]=0x00; tbuf[15]=0x01;                 /* htype ether */
+                    tbuf[16]=0x08; tbuf[17]=0x00;                 /* ptype IPv4 */
+                    tbuf[18]=6; tbuf[19]=4; tbuf[20]=0x00; tbuf[21]=0x01; /* hlen plen op=req */
+                    memcpy(tbuf + 22, sa, 6);                     /* sender MAC */
+                    tbuf[28]=10; tbuf[29]=14; tbuf[30]=1; tbuf[31]=253;   /* sender 10.14.1.253 */
+                    tbuf[38]=10; tbuf[39]=14; tbuf[40]=1; tbuf[41]=254;   /* target 10.14.1.254 */
+                    memset(&tp, 0, sizeof(tp));
+                    tp.port = live_port; tp.data = tbuf; tp.size = 64; tp.baddr = tbaddr;
+                    { int trc = bmd_tx(unit, &tp);
+                      if (rounds == 0) LOG("--rx-dump: ARP-probe TX out port %d rc=%d (%s)",
+                                           live_port, trc, trc==0?"SENT":CDK_ERRMSG(trc)); }
+                }
 
                 for (k = 0; k < 100; k++) {   /* poll ~1s between status ticks */
                     rc2 = bmd_rx_poll(unit, &rp);
@@ -2025,6 +2055,7 @@ main(int argc, char *argv[])
             }
         }
         bmd_rx_stop(unit);
+        if (tbuf) bmd_dma_free_coherent(unit, 128, tbuf, tbaddr);
         if (rbuf) bmd_dma_free_coherent(unit, 2048, rbuf, rbaddr);
         LOG("--rx-dump: stopped (received %d frames)", got);
     }
@@ -2091,6 +2122,28 @@ main(int argc, char *argv[])
                 }
             }
             LOG("--copper-dbg: sweep done (no '***' lines above = no jack hears a partner)");
+        }
+
+        /* Map the live link to a CDK port: iterate ports, find the bcm54282-bound
+         * one whose driver reports link=1. That's the port the user's traffic enters
+         * — use it for VLAN/STP/RX/L3 regardless of jack-number labeling. */
+        {
+            int p;
+            LOG("--copper-dbg: CDK-port -> bound-54282 addr + bmd link:");
+            for (p = 1; p <= 56; p++) {
+                phy_ctrl_t *pc, *cu = NULL;
+                int link = -1, an = -1;
+                for (pc = BMD_PORT_PHY_CTRL(unit, p); pc != NULL; pc = pc->next) {
+                    if (pc->drv && pc->drv->drv_name &&
+                        !strcmp(pc->drv->drv_name, "bcm54282")) { cu = pc; break; }
+                }
+                if (!cu) continue;
+                bmd_phy_link_get(unit, p, &link, &an);
+                if (link == 1)
+                    LOG("  *** CDK port %d: 54282 addr=0x%02x  bmd link=%d an=%d  <== THE LIVE PORT",
+                        p, PHY_CTRL_PHY_ADDR(cu), link, an);
+            }
+            LOG("--copper-dbg: (look for '*** ... THE LIVE PORT')");
         }
     }
 
