@@ -1356,6 +1356,8 @@ main(int argc, char *argv[])
             scan = 6;   /* resident RX: receive + decode frames punted to CPU */
         } else if (!strcmp(argv[i], "--copper-dbg")) {
             scan = 7;   /* read ge0 (jack 1) key MII regs to debug copper link */
+        } else if (!strcmp(argv[i], "--lb-test")) {
+            scan = 8;   /* serdes-loopback RX test: TX->loop->MAC RX->CPU (no network) */
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
             usage(argv[0]); return 0;
         } else {
@@ -2264,6 +2266,88 @@ main(int argc, char *argv[])
             }
             LOG("--copper-dbg: (look for '*** ... THE LIVE PORT')");
         }
+    }
+
+    /* --lb-test: prove the chip->CPU RX path WITHOUT the network. Put the internal
+     * QSGMII serdes into loopback (system-side TX->RX inside the 56340), so a frame
+     * the MAC transmits comes straight back as MAC RX -> L2 flood (VLAN1, CPU member)
+     * -> CMICm RX DMA -> bmd_rx_poll. If we catch it, the MAC-RX + flood-to-CPU + RX
+     * DMA path all work and the only remaining gap is getting real frames onto the
+     * wire. The live copper port is CDK 26. */
+    if (scan == 8) {
+        int lp = 26;
+        dma_addr_t rb = 0, tb = 0;
+        uint8_t *rbuf = bmd_dma_alloc_coherent(unit, 2048, &rb);
+        uint8_t *tbuf = bmd_dma_alloc_coherent(unit, 128, &tb);
+        phy_ctrl_t *pc, *sd = NULL;
+        int got = 0, k, drc;
+
+        drc = bmd_xgsm_dma_init(unit);
+        LOG("--lb-test: dma_init rc=%d; port %d", drc, lp);
+        /* Use the bring-up's port config (mode_set 1000fd here forces AN off and
+         * breaks TX); just reconcile the MAC + VLAN/STP like the working --rx-dump. */
+        bmd_port_mode_update(unit, lp);
+        bmd_vlan_port_add(unit, 1, lp, BMD_VLAN_PORT_F_UNTAGGED);
+        bmd_port_vlan_set(unit, lp, 1);
+        bmd_port_stp_set(unit, lp, bmdSpanningTreeForwarding);
+        l3_mac_rx_enable(unit, lp);
+        /* engage internal serdes loopback */
+        for (pc = BMD_PORT_PHY_CTRL(unit, lp); pc; pc = pc->next)
+            if (pc->drv && pc->drv->drv_name &&
+                !strcmp(pc->drv->drv_name, "bcmi_qsgmii_serdes")) { sd = pc; break; }
+        if (sd && sd->drv->pd_loopback_set) {
+            int lrc = PHY_LOOPBACK_SET(sd, 1);
+            LOG("--lb-test: QSGMII serdes loopback ON (rc=%d)", lrc);
+        } else {
+            LOG("--lb-test: no serdes loopback available");
+        }
+        l3_mac_rx_enable(unit, lp);   /* re-assert after loopback set */
+
+        if (rbuf && tbuf) {
+            bmd_pkt_t rpkt;
+            int armed;
+            memset(&rpkt, 0, sizeof(rpkt));
+            rpkt.data = rbuf; rpkt.size = 2048; rpkt.baddr = rb;
+            armed = (bmd_rx_start(unit, &rpkt) >= 0);
+            LOG("--lb-test: rx armed=%d; TXing test frames into the loop...", armed);
+            for (k = 0; k < 60 && armed; k++) {
+                bmd_pkt_t tp, *rp = NULL; int b, j;
+                static const uint8_t da[6]={0x00,0x11,0x22,0x33,0x44,0x55};
+                static const uint8_t sa[6]={0x02,0xed,0x60,0x00,0x00,0x01};
+                memset(tbuf,0,64); memcpy(tbuf,da,6); memcpy(tbuf+6,sa,6);
+                tbuf[12]=0x08; tbuf[13]=0x00; for(b=14;b<64;b++) tbuf[b]=(uint8_t)b;
+                memset(&tp,0,sizeof(tp)); tp.port=lp; tp.data=tbuf; tp.size=64; tp.baddr=tb;
+                drc = bmd_tx(unit, &tp);
+                if (k==0) LOG("--lb-test: bmd_tx rc=%d (%s)", drc, drc==0?"SENT":CDK_ERRMSG(drc));
+                for (j=0;j<20;j++){ int r=bmd_rx_poll(unit,&rp); if(r==0&&rp)break;
+                    { struct timespec ts={.tv_sec=0,.tv_nsec=10*1000*1000}; nanosleep(&ts,NULL);} }
+                if (rp) {
+                    uint8_t *d=rp->data; got++;
+                    LOG("  *** LB RX #%d: %d bytes src_port %d DA %02x:%02x:%02x:%02x:%02x:%02x "
+                        "etype %02x%02x  <== RX-TO-CPU PATH WORKS", got, rp->size, rp->port,
+                        d[0],d[1],d[2],d[3],d[4],d[5], d[12],d[13]);
+                    memset(&rpkt,0,sizeof(rpkt)); rpkt.data=rbuf; rpkt.size=2048; rpkt.baddr=rb;
+                    if (bmd_rx_start(unit,&rpkt)<0) armed=0;
+                }
+            }
+            bmd_rx_stop(unit);
+        }
+        if (sd && sd->drv->pd_loopback_set) PHY_LOOPBACK_SET(sd, 0);
+        {   /* did the looped frames reach the MAC RX at all? */
+            uint32_t rxp=0, rxb=0, rxd=0, txp=0;
+            volatile uint32_t *cmc = _mmap(0x48031000, 0x1000);
+            bmd_stat_get(unit, lp, bmdStatRxPackets, &rxp);
+            bmd_stat_get(unit, lp, bmdStatRxBytes, &rxb);
+            bmd_stat_get(unit, lp, bmdStatRxDrops, &rxd);
+            bmd_stat_get(unit, lp, bmdStatTxPackets, &txp);
+            LOG("--lb-test: port %d MIB rx_pkts=%u rx_bytes=%u rx_drops=%u tx_pkts=%u",
+                lp, rxp, rxb, rxd, txp);
+            if (cmc) LOG("--lb-test: CMIC DMA_STAT=%08x [RXdesc_done(b5)=%d]",
+                         cmc[0x150/4], !!(cmc[0x150/4] & (1u<<5)));
+        }
+        LOG("--lb-test: done, %d looped frames received to CPU", got);
+        if (tbuf) bmd_dma_free_coherent(unit,128,tbuf,tb);
+        if (rbuf) bmd_dma_free_coherent(unit,2048,rbuf,rb);
     }
 
     if (keep) {
