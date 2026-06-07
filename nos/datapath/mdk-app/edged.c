@@ -73,6 +73,7 @@ union i2c_smbus_data {
 #include <phy/phy.h>
 #include <phy/phy_drvlist.h>
 #include <phy/phy_aer_iblk.h>
+#include <phy/phy_brcm_shadow.h>   /* read 54282 EXP_PKT_COUNTER (copper RX/TX count) */
 
 #include "linux_shbde.h"
 #include "edged_l3.h"
@@ -2068,10 +2069,10 @@ main(int argc, char *argv[])
                     if (sl != was_sl) { LOG("--rx-dump: QSGMII serdes link=%d (passthru)", sl); was_sl = sl; }
                 }
 
-                /* TX a broadcast ARP request out the live port (10.14.1.253 -> who-has
-                 * 10.14.1.254) as a deterministic trigger; on a busy net ambient
-                 * broadcast also arrives. A reply/any frame floods to CPU -> RX. */
-                if (tbuf) {
+                /* TX probe DISABLED: the user is pinging 10.14.1.253 (real ingress),
+                 * and the 54282 EXP_PKT_COUNTER counts RX+TX — so we must NOT TX while
+                 * measuring whether frames physically reach the PHY's copper RX. */
+                if (0 && tbuf) {
                     bmd_pkt_t tp; int b;
                     static const uint8_t sa[6] = {0x02,0xed,0x60,0x00,0x00,0x01};
                     memset(tbuf, 0, 64);
@@ -2141,6 +2142,21 @@ main(int argc, char *argv[])
                         if (sp == live_port) continue;
                         bmd_stat_get(unit, sp, bmdStatRxPackets, &r);
                         if (r) LOG("    !! port %d has rx_pkts=%u  <== frames land HERE", sp, r);
+                    }
+                    /* 54282 EXP_PKT_COUNTER (addr 0x100f0015): RX+TX packets seen at the
+                     * COPPER PHY itself. We don't TX -> any nonzero = frames physically
+                     * arriving on the copper wire (isolates PHY-RX from QSGMII/MAC). */
+                    {
+                        phy_ctrl_t *pc;
+                        for (pc = BMD_PORT_PHY_CTRL(unit, live_port); pc; pc = pc->next) {
+                            if (pc->drv && pc->drv->drv_name &&
+                                !strcmp(pc->drv->drv_name, "bcm54282")) {
+                                uint32_t cnt = 0;
+                                phy_brcm_shadow_read(pc, 0x100f0015, &cnt);
+                                LOG("    54282 EXP_PKT_COUNTER (copper RX+TX) = %u", cnt & 0xffff);
+                                break;
+                            }
+                        }
                     }
                 }
             }
