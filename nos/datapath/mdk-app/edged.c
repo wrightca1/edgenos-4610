@@ -1981,7 +1981,17 @@ main(int argc, char *argv[])
         bmd_vlan_port_add(unit, 1, live_port, BMD_VLAN_PORT_F_UNTAGGED);
         bmd_port_vlan_set(unit, live_port, 1);
         bmd_port_stp_set(unit, live_port, bmdSpanningTreeForwarding);
-        LOG("--rx-dump: live port %d -> VLAN 1 + forwarding; will ARP-probe 10.14.1.254", live_port);
+        /* CRITICAL: enable the GE MAC. bmd_port_mode_update reads the (up) PHY link
+         * and takes the MAC out of soft-reset + sets the EPC egress bit. Without it
+         * the PHY links but the MAC drops ingress, so nothing floods to the CPU.
+         * (--keep's control_loop does this; the one-shot RX path must do it too.) */
+        {
+            bmd_port_mode_t pm; uint32_t pf = 0;
+            bmd_port_mode_update(unit, live_port);
+            bmd_port_mode_get(unit, live_port, &pm, &pf);
+            LOG("--rx-dump: live port %d VLAN1+fwd, MAC update done [link_up=%d]; "
+                "ARP-probe 10.14.1.254", live_port, !!(pf & BMD_PORT_MODE_F_LINK_UP));
+        }
 
         /* Arm ONE RX descriptor up front. bmd_rx_poll clears it only on an actual
          * receive; on timeout it stays armed, so we re-arm only after a frame
@@ -1989,6 +1999,12 @@ main(int argc, char *argv[])
         {
             bmd_pkt_t rpkt;
             int armed = 0, srv, rounds = 0;
+            /* Raw CMIC CMC0 DMA-register window (phys 0x48031000) to watch the RX
+             * channel (CH1) directly: CTRL@0x144 (DMA_EN b1), STAT@0x150 (RX DESC_DONE
+             * b5, DMA_ACTIVE b9), CURR_DESC@0x1ac. Tells us if the chip ever signals
+             * RX completion / advances the descriptor vs frames never reaching CPU. */
+            volatile uint32_t *cmc = _mmap(0x48031000, 0x1000);
+            uint32_t laststat = 0xffffffff;
 
             memset(&rpkt, 0, sizeof(rpkt));
             rpkt.data = rbuf; rpkt.size = 2048; rpkt.baddr = rbaddr;
@@ -1997,10 +2013,25 @@ main(int argc, char *argv[])
                 if (srv < 0) LOG("--rx-dump: bmd_rx_start rc=%d (%s)", srv, CDK_ERRMSG(srv));
                 else armed = 1;
             }
+            if (cmc) LOG("--rx-dump: CH1 CTRL=%08x STAT=%08x CURR_DESC=%08x (post-arm)",
+                         cmc[0x144/4], cmc[0x150/4], cmc[0x1ac/4]);
 
             while (armed) {
                 bmd_pkt_t *rp = NULL;
                 int rc2 = -1, k;
+
+                /* Reconcile the MAC each round: bmd_init re-inits the copper PHY so the
+                 * link takes a few seconds to re-establish; bmd_port_mode_update enables
+                 * the GE MAC once the link is up (matches --keep control_loop). */
+                {
+                    static int was_up = -1;
+                    bmd_port_mode_t pm; uint32_t pf = 0; int up;
+                    bmd_port_mode_update(unit, live_port);
+                    bmd_port_mode_get(unit, live_port, &pm, &pf);
+                    up = !!(pf & BMD_PORT_MODE_F_LINK_UP);
+                    if (up != was_up) { LOG("--rx-dump: live port %d link %s (MAC %s)",
+                        live_port, up?"UP":"down", up?"enabled":"held"); was_up = up; }
+                }
 
                 /* TX a broadcast ARP request out the live port (10.14.1.253 -> who-has
                  * 10.14.1.254) as a deterministic trigger; on a busy net ambient
@@ -2028,6 +2059,14 @@ main(int argc, char *argv[])
                 for (k = 0; k < 100; k++) {   /* poll ~1s between status ticks */
                     rc2 = bmd_rx_poll(unit, &rp);
                     if (rc2 == 0 && rp) break;
+                    if (cmc) {   /* report CMIC DMA-STAT transitions (esp. RX DESC_DONE b5) */
+                        uint32_t st = cmc[0x150/4];
+                        if (st != laststat) {
+                            LOG("  CMIC DMA_STAT %08x -> %08x [RXdesc_done(b5)=%d RXactive(b9)=%d] CURR=%08x",
+                                laststat, st, !!(st & (1u<<5)), !!(st & (1u<<9)), cmc[0x1ac/4]);
+                            laststat = st;
+                        }
+                    }
                     { struct timespec ts = { .tv_sec = 0, .tv_nsec = 10*1000*1000 }; nanosleep(&ts, NULL); }
                 }
 
@@ -2051,7 +2090,15 @@ main(int argc, char *argv[])
                     rpkt.data = rbuf; rpkt.size = 2048; rpkt.baddr = rbaddr;
                     if (bmd_rx_start(unit, &rpkt) < 0) armed = 0;
                 }
-                if (++rounds % 20 == 0) LOG("--rx-dump: %d rounds, %d frames so far", rounds, got);
+                if (++rounds % 20 == 0) {
+                    uint32_t rxp=0, rxb=0, rxd=0, txp=0;
+                    bmd_stat_get(unit, live_port, bmdStatRxPackets, &rxp);
+                    bmd_stat_get(unit, live_port, bmdStatRxBytes, &rxb);
+                    bmd_stat_get(unit, live_port, bmdStatRxDrops, &rxd);
+                    bmd_stat_get(unit, live_port, bmdStatTxPackets, &txp);
+                    LOG("--rx-dump: %d rounds, %d frames; port %d MIB rx_pkts=%u rx_bytes=%u "
+                        "rx_drops=%u tx_pkts=%u", rounds, got, live_port, rxp, rxb, rxd, txp);
+                }
             }
         }
         bmd_rx_stop(unit);
