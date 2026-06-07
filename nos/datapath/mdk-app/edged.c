@@ -1987,10 +1987,24 @@ main(int argc, char *argv[])
          * (--keep's control_loop does this; the one-shot RX path must do it too.) */
         {
             bmd_port_mode_t pm; uint32_t pf = 0;
+            phy_ctrl_t *pc;
             bmd_port_mode_update(unit, live_port);
             bmd_port_mode_get(unit, live_port, &pm, &pf);
             LOG("--rx-dump: live port %d VLAN1+fwd, MAC update done [link_up=%d]; "
                 "ARP-probe 10.14.1.254", live_port, !!(pf & BMD_PORT_MODE_F_LINK_UP));
+            /* THE FIX: the internal QSGMII SerDes powers up in 1000BASE-X FIBER mode
+             * (bcmi_qsgmii_serdes_init ends with PhyEvent_ChangeToFiber), but it's
+             * wired to the 54282 over QSGMII (SGMII-based). Fiber vs SGMII = protocol
+             * mismatch -> serdes never links -> MAC gets no RX. Notify it to PASSTHRU
+             * (SGMII) so it speaks QSGMII to the copper PHY. The bmd cascade isn't
+             * doing this for the copper port, so we do it explicitly. */
+            for (pc = BMD_PORT_PHY_CTRL(unit, live_port); pc != NULL; pc = pc->next) {
+                if (pc->drv && pc->drv->drv_name &&
+                    !strcmp(pc->drv->drv_name, "bcmi_qsgmii_serdes")) {
+                    int nrc = PHY_NOTIFY(pc, PhyEvent_ChangeToPassthru);
+                    LOG("--rx-dump: QSGMII serdes -> PASSTHRU/SGMII mode (rc=%d)", nrc);
+                }
+            }
         }
 
         /* Arm ONE RX descriptor up front. bmd_rx_poll clears it only on an actual
@@ -2024,19 +2038,34 @@ main(int argc, char *argv[])
                  * link takes a few seconds to re-establish; bmd_port_mode_update enables
                  * the GE MAC once the link is up (matches --keep control_loop). */
                 {
-                    static int was_up = -1;
+                    static int was_up = -1, was_sl = -1;
                     bmd_port_mode_t pm; uint32_t pf = 0; int up;
+                    phy_ctrl_t *pc;
+                    int sl = -1, sa = -1;
                     bmd_port_mode_update(unit, live_port);
                     bmd_port_mode_get(unit, live_port, &pm, &pf);
                     up = !!(pf & BMD_PORT_MODE_F_LINK_UP);
                     if (up != was_up) {
                         LOG("--rx-dump: live port %d link %s (MAC %s)",
                             live_port, up?"UP":"down", up?"enabled":"held"); was_up = up;
-                        /* port_mode_update only clears SOFT_RESET; force RX_EN/TX_EN so
-                         * the MAC actually receives (a port left at RX_EN=0 TXes but
-                         * counts rx_pkts=0). */
                         if (up) l3_mac_rx_enable(unit, live_port);
                     }
+                    /* Re-assert PASSTHRU/SGMII on the internal QSGMII serdes EACH round:
+                     * bmd_port_mode_update re-inits it to fiber (1000BASE-X) default,
+                     * which can't link to the 54282's QSGMII. Then read the serdes link
+                     * twice (latch-low) to see if SGMII comes up. */
+                    for (pc = BMD_PORT_PHY_CTRL(unit, live_port); pc != NULL; pc = pc->next) {
+                        if (pc->drv && pc->drv->drv_name &&
+                            !strcmp(pc->drv->drv_name, "bcmi_qsgmii_serdes")) {
+                            PHY_NOTIFY(pc, PhyEvent_ChangeToPassthru);
+                            if (pc->drv->pd_link_get) {
+                                PHY_LINK_GET(pc, &sl, &sa);
+                                PHY_LINK_GET(pc, &sl, &sa);
+                            }
+                            break;
+                        }
+                    }
+                    if (sl != was_sl) { LOG("--rx-dump: QSGMII serdes link=%d (passthru)", sl); was_sl = sl; }
                 }
 
                 /* TX a broadcast ARP request out the live port (10.14.1.253 -> who-has
@@ -2192,9 +2221,21 @@ main(int argc, char *argv[])
                 }
                 if (!cu) continue;
                 bmd_phy_link_get(unit, p, &link, &an);
-                if (link == 1)
+                if (link == 1) {
+                    phy_ctrl_t *q;
+                    uint32_t spd = 0;
                     LOG("  *** CDK port %d: 54282 addr=0x%02x  bmd link=%d an=%d  <== THE LIVE PORT",
                         p, PHY_CTRL_PHY_ADDR(cu), link, an);
+                    /* dump the full chain incl the internal QSGMII serdes + its link */
+                    for (q = BMD_PORT_PHY_CTRL(unit, p); q != NULL; q = q->next) {
+                        int ql = -2, qa = -2;
+                        if (q->drv && q->drv->pd_link_get) PHY_LINK_GET(q, &ql, &qa);
+                        spd = 0;
+                        if (q->drv && q->drv->pd_speed_get) PHY_SPEED_GET(q, &spd);
+                        LOG("      chain: drv=%-22s addr=0x%02x link=%d an=%d speed=%d",
+                            q->drv?q->drv->drv_name:"?", PHY_CTRL_PHY_ADDR(q), ql, qa, (int)spd);
+                    }
+                }
             }
             LOG("--copper-dbg: (look for '*** ... THE LIVE PORT')");
         }
