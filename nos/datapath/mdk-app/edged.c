@@ -2127,12 +2127,21 @@ main(int argc, char *argv[])
                 }
                 if (++rounds % 20 == 0) {
                     uint32_t rxp=0, rxb=0, rxd=0, txp=0;
+                    int sp;
                     bmd_stat_get(unit, live_port, bmdStatRxPackets, &rxp);
                     bmd_stat_get(unit, live_port, bmdStatRxBytes, &rxb);
                     bmd_stat_get(unit, live_port, bmdStatRxDrops, &rxd);
                     bmd_stat_get(unit, live_port, bmdStatTxPackets, &txp);
                     LOG("--rx-dump: %d rounds, %d frames; port %d MIB rx_pkts=%u rx_bytes=%u "
                         "rx_drops=%u tx_pkts=%u", rounds, got, live_port, rxp, rxb, rxd, txp);
+                    /* Scan ALL ports for RX activity — finds where copper frames actually
+                     * land if the QSGMII sub-port maps ge25 to a logical port != 26. */
+                    for (sp = 1; sp <= 52; sp++) {
+                        uint32_t r = 0;
+                        if (sp == live_port) continue;
+                        bmd_stat_get(unit, sp, bmdStatRxPackets, &r);
+                        if (r) LOG("    !! port %d has rx_pkts=%u  <== frames land HERE", sp, r);
+                    }
                 }
             }
         }
