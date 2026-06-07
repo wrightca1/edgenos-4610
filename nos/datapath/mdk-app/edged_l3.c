@@ -58,7 +58,8 @@ uint32_t
 l3_mac_rx_enable(int unit, int port)
 {
     XMAC_CTRLr_t c;
-    uint32_t before, after;
+    XMAC_MODEr_t m;
+    uint32_t before, after, spd;
     int ioerr = 0;
     ioerr += READ_XMAC_CTRLr(unit, port, &c);
     before = XMAC_CTRLr_GET(c, 0);
@@ -68,8 +69,13 @@ l3_mac_rx_enable(int unit, int port)
     ioerr += WRITE_XMAC_CTRLr(unit, port, c);
     ioerr += READ_XMAC_CTRLr(unit, port, &c);
     after = XMAC_CTRLr_GET(c, 0);
-    L3LOG("port %d XMAC_CTRL %08x -> %08x [rx_en=%d tx_en=%d soft_rst=%d]",
-          port, before, after, !!(after & 0x2), !!(after & 0x1), !!(after & 0x40));
+    /* Also report the MAC speed: SPEED_MODE 0=10M 1=100M 2=1G 3=2.5G 4=10G. A copper
+     * QSGMII port must be at 1G (2); a mismatch silently drops RX. */
+    ioerr += READ_XMAC_MODEr(unit, port, &m);
+    spd = XMAC_MODEr_SPEED_MODEf_GET(m);
+    L3LOG("port %d XMAC_CTRL %08x -> %08x [rx_en=%d tx_en=%d soft_rst=%d] SPEED_MODE=%u (%s)",
+          port, before, after, !!(after & 0x2), !!(after & 0x1), !!(after & 0x40),
+          spd, spd==2?"1G":spd==4?"10G":spd==1?"100M":spd==0?"10M":"?");
     return ioerr ? 0xffffffff : after;
 }
 

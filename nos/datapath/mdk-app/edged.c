@@ -1217,6 +1217,55 @@ sfp_link_alive(int unit, int port)
     return ((pmd_st & 0x4) && ((pcs_st & 0x4) || (blk & 0x1))) ? 1 : 0;
 }
 
+/* Program the internal QSGMII SerDes for SGMII/passthru to an external copper PHY,
+ * replicating the full Broadcom SDK qsgmii65 passthru config that OpenMDK's
+ * bcmi_qsgmii_serdes driver OMITS (it only flips the FIBER_MODE bit and never resets
+ * the serdes — its pd_reset is a no-op). Without this the serdes syncs (link=1) but
+ * the RX datapath never passes copper frames to the MAC. Registers via phy_aer_iblk:
+ *   MIICNTL 0x50000000, MII_ANA 0x50000004, CONTROL1000X1 0x50008300, ...X2 0x50008301.
+ * (Derived by diffing OpenBCM src/soc/phy/qsgmii65.c against OpenMDK.) */
+static void
+qsgmii_serdes_passthru_setup(int unit, int port)
+{
+    phy_ctrl_t *pc, *sd = NULL;
+    uint32_t v;
+    static int reset_done = 0;
+    int k;
+
+    for (pc = BMD_PORT_PHY_CTRL(unit, port); pc != NULL; pc = pc->next) {
+        if (pc->drv && pc->drv->drv_name &&
+            !strcmp(pc->drv->drv_name, "bcmi_qsgmii_serdes")) { sd = pc; break; }
+    }
+    if (!sd) return;
+
+    /* 1. Reset the serdes once (OpenMDK never does — full SDK resets in init). */
+    if (!reset_done) {
+        phy_aer_iblk_read(sd, 0x50000000, &v);
+        phy_aer_iblk_write(sd, 0x50000000, v | (1u << 15));   /* MIICNTL.RST_SW */
+        for (k = 0; k < 100; k++) {
+            phy_aer_iblk_read(sd, 0x50000000, &v);
+            if (!(v & (1u << 15))) break;
+            { struct timespec ts = { .tv_sec = 0, .tv_nsec = 1*1000*1000 }; nanosleep(&ts, NULL); }
+        }
+        reset_done = 1;
+    }
+    /* 2. MII_CTRL = FULL_DUPLEX(b8) | SS_1000(b6) | AUTONEG_EN(b12) | RESTART_AN(b9). */
+    phy_aer_iblk_write(sd, 0x50000000, (1u<<8)|(1u<<6)|(1u<<12)|(1u<<9));
+    /* 3. MII_ANA (reg4) = C37 advert: FD(b5) | PAUSE(b7) | ASYM_PAUSE(b8). */
+    phy_aer_iblk_write(sd, 0x50000004, (1u<<5)|(1u<<7)|(1u<<8));
+    /* 4. CONTROL1000X1: FIBER_MODE_1000X(b0)=0 (SGMII — OpenMDK only links with this
+     *    clear, vs the full SDK which sets it + an extra XGXS override we lack),
+     *    DISABLE_PLL_PWRDWN(b6)=1, SGMII_MASTER_MODE(b5)=0 (slave), AUTODET_EN(b4)=0. */
+    phy_aer_iblk_read(sd, 0x50008300, &v);
+    v = (v & ~((1u<<0)|(1u<<4)|(1u<<5))) | (1u<<6);
+    phy_aer_iblk_write(sd, 0x50008300, v);
+    /* 5. CONTROL1000X2: ENABLE_PARALLEL_DETECTION(b0)=1, FILTER_FORCE_LINK(b2)=1,
+     *    FORCE_XMIT_DATA_ON_TXSIDE(b5)=0. */
+    phy_aer_iblk_read(sd, 0x50008301, &v);
+    v = (v & ~(1u<<5)) | (1u<<0) | (1u<<2);
+    phy_aer_iblk_write(sd, 0x50008301, v);
+}
+
 static int
 parse_unit(const char *s, uint32_t *ven, uint32_t *dev, uint32_t *rev, uint32_t *base)
 {
@@ -2037,10 +2086,10 @@ main(int argc, char *argv[])
                 bmd_pkt_t *rp = NULL;
                 int rc2 = -1, k;
 
-                /* Reconcile the MAC each round: bmd_init re-inits the copper PHY so the
-                 * link takes a few seconds to re-establish; bmd_port_mode_update enables
-                 * the GE MAC once the link is up (matches --keep control_loop). */
-                {
+                /* Reconcile the MAC + serdes mode ONLY for the first ~8 rounds (to catch
+                 * link-up), then STOP reconfiguring and purely poll — re-running
+                 * port_mode_update / fiber<->passthru every round may destabilize RX. */
+                if (rounds < 8) {
                     static int was_up = -1, was_sl = -1;
                     bmd_port_mode_t pm; uint32_t pf = 0; int up;
                     phy_ctrl_t *pc;
@@ -2053,14 +2102,18 @@ main(int argc, char *argv[])
                             live_port, up?"UP":"down", up?"enabled":"held"); was_up = up;
                         if (up) l3_mac_rx_enable(unit, live_port);
                     }
-                    /* Re-assert PASSTHRU/SGMII on the internal QSGMII serdes EACH round:
-                     * bmd_port_mode_update re-inits it to fiber (1000BASE-X) default,
-                     * which can't link to the 54282's QSGMII. Then read the serdes link
-                     * twice (latch-low) to see if SGMII comes up. */
+                    /* Re-assert SGMII passthru on the serdes (the one config that links;
+                     * the fuller qsgmii_serdes_passthru_setup() either doesn't link or
+                     * links-without-RX — QSGMII RX needs coordinated serdes+54282 SGMII-AN
+                     * config, a holistic qsgmii65 port / ICOS-value capture, TODO). */
+                    for (pc = BMD_PORT_PHY_CTRL(unit, live_port); pc != NULL; pc = pc->next)
+                        if (pc->drv && pc->drv->drv_name &&
+                            !strcmp(pc->drv->drv_name, "bcmi_qsgmii_serdes")) {
+                            PHY_NOTIFY(pc, PhyEvent_ChangeToPassthru); break; }
+                    (void)qsgmii_serdes_passthru_setup;
                     for (pc = BMD_PORT_PHY_CTRL(unit, live_port); pc != NULL; pc = pc->next) {
                         if (pc->drv && pc->drv->drv_name &&
                             !strcmp(pc->drv->drv_name, "bcmi_qsgmii_serdes")) {
-                            PHY_NOTIFY(pc, PhyEvent_ChangeToPassthru);
                             if (pc->drv->pd_link_get) {
                                 PHY_LINK_GET(pc, &sl, &sa);
                                 PHY_LINK_GET(pc, &sl, &sa);
@@ -2068,12 +2121,10 @@ main(int argc, char *argv[])
                             break;
                         }
                     }
-                    if (sl != was_sl) { LOG("--rx-dump: QSGMII serdes link=%d (passthru)", sl); was_sl = sl; }
+                    if (sl != was_sl) { LOG("--rx-dump: QSGMII serdes link=%d (full-sdk cfg)", sl); was_sl = sl; }
                 }
 
-                /* TX probe DISABLED: the user is pinging 10.14.1.253 (real ingress),
-                 * and the 54282 EXP_PKT_COUNTER counts RX+TX — so we must NOT TX while
-                 * measuring whether frames physically reach the PHY's copper RX. */
+                /* PASSIVE LISTEN: no TX at all, just report what the switch receives. */
                 if (0 && tbuf) {
                     bmd_pkt_t tp; int b;
                     static const uint8_t sa[6] = {0x02,0xed,0x60,0x00,0x00,0x01};
@@ -2145,20 +2196,26 @@ main(int argc, char *argv[])
                         bmd_stat_get(unit, sp, bmdStatRxPackets, &r);
                         if (r) LOG("    !! port %d has rx_pkts=%u  <== frames land HERE", sp, r);
                     }
-                    /* 54282 EXP_PKT_COUNTER (addr 0x100f0015): RX+TX packets seen at the
-                     * COPPER PHY itself. We don't TX -> any nonzero = frames physically
-                     * arriving on the copper wire (isolates PHY-RX from QSGMII/MAC). */
+                    /* 54282 EXP_PKT_COUNTER (RX+TX, read-clears): with NO TX, any nonzero
+                     * = frames physically arriving on that copper PHY's wire. Scan ALL
+                     * copper ports so we catch traffic on ANY port, not just 26. */
                     {
-                        phy_ctrl_t *pc;
-                        for (pc = BMD_PORT_PHY_CTRL(unit, live_port); pc; pc = pc->next) {
-                            if (pc->drv && pc->drv->drv_name &&
-                                !strcmp(pc->drv->drv_name, "bcm54282")) {
+                        int cp; int any = 0;
+                        for (cp = 1; cp <= 48; cp++) {
+                            phy_ctrl_t *pc;
+                            for (pc = BMD_PORT_PHY_CTRL(unit, cp); pc; pc = pc->next) {
                                 uint32_t cnt = 0;
+                                if (!pc->drv || !pc->drv->drv_name ||
+                                    strcmp(pc->drv->drv_name, "bcm54282")) continue;
                                 phy_brcm_shadow_read(pc, 0x100f0015, &cnt);
-                                LOG("    54282 EXP_PKT_COUNTER (copper RX+TX) = %u", cnt & 0xffff);
+                                if (cnt & 0xffff) {
+                                    LOG("    !! CDK port %d 54282 PKT_COUNTER=%u <== PHY sees frames",
+                                        cp, cnt & 0xffff); any = 1;
+                                }
                                 break;
                             }
                         }
+                        if (!any) LOG("    (no copper PHY shows any RX/TX packets — wire is silent to us)");
                     }
                 }
             }
