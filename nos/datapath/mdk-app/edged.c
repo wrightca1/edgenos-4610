@@ -1351,6 +1351,8 @@ main(int argc, char *argv[])
             l3_show_flag = 1;
         } else if (!strcmp(argv[i], "--dma-test")) {
             scan = 5;   /* exercise CPU<->chip DMA via the BDE coherent pool */
+        } else if (!strcmp(argv[i], "--rx-dump")) {
+            scan = 6;   /* resident RX: receive + decode frames punted to CPU */
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
             usage(argv[0]); return 0;
         } else {
@@ -1941,6 +1943,121 @@ main(int argc, char *argv[])
                 bmd_dma_free_coherent(unit, 2048, rbuf, rbaddr);
             }
         }
+    }
+
+    /* --rx-dump: prove the chip->CPU RX DMA path. The CPU port is a member of the
+     * default VLAN (bmd_switching_init) and bmd_rx_start enables it in EPC_LINK_BMAP,
+     * so broadcast/control frames arriving on a forwarding port flood to the CPU.
+     * Resident loop: submit a buffer, poll, decode, repeat. Run under an external
+     * timeout; the linked Nexus emits LLDP/STP/ARP that should land here. */
+    if (scan == 6) {
+        dma_addr_t rbaddr = 0;
+        uint8_t *rbuf;
+        int got = 0, drc;
+
+        /* Re-init the CMICm DMA channels: the (advisory) XLPORT self-test during
+         * bmd_init ran a failed jumbo TX that can leave a channel mid-abort; a clean
+         * re-init is what makes RX submit succeed (mirrors --dma-test). */
+        drc = bmd_xgsm_dma_init(unit);
+        LOG("--rx-dump: dma_init rc=%d (%s)", drc, drc == 0 ? "OK" : CDK_ERRMSG(drc));
+
+        rbuf = bmd_dma_alloc_coherent(unit, 2048, &rbaddr);
+        if (rbuf == NULL) {
+            LOG("--rx-dump: DMA pool unavailable (BDE loaded?)");
+        } else {
+            LOG("--rx-dump: resident RX active — flood-to-CPU on default VLAN; "
+                "waiting for frames (run under `timeout`, Ctrl-C to stop)");
+        }
+        /* TX stimulus: with the SFP+ ports physically loopbacked, a frame sent out
+         * a looped port returns as ingress and floods (VLAN) to the CPU — a
+         * deterministic RX trigger that doesn't depend on the link partner. */
+        dma_addr_t tbaddr = 0;
+        uint8_t *tbuf = rbuf ? bmd_dma_alloc_coherent(unit, 128, &tbaddr) : NULL;
+        /* TX out an XLPORT/SFP+ port times out (XLPORT egress-DMA issue, separate),
+         * but GE/copper TX works. Use a copper front port in MAC loopback as the RX
+         * stimulus: TX a broadcast to it, the MAC loops it back as ingress, and it
+         * floods VLAN 1 to the CPU — deterministic, no cabling, no XLPORT TX. */
+        int loop_port = (n_front > 0) ? front_ports[0] : 1;
+        int lrc = bmd_port_mode_set(unit, loop_port, bmdPortMode1000fd,
+                                    BMD_PORT_MODE_F_MAC_LOOPBACK);
+        bmd_vlan_port_add(unit, 1, loop_port, BMD_VLAN_PORT_F_UNTAGGED);
+        bmd_port_vlan_set(unit, loop_port, 1);
+        bmd_port_stp_set(unit, loop_port, bmdSpanningTreeForwarding);
+        LOG("--rx-dump: stimulus port %d -> 1G MAC-loopback (rc=%d) + VLAN 1 + forwarding",
+            loop_port, lrc);
+
+        /* Arm ONE RX descriptor up front. bmd_rx_poll clears it only on an actual
+         * receive; on timeout it stays armed, so we re-arm only after a frame
+         * (re-arming while pending returns CDK_E_RESOURCE). */
+        {
+            bmd_pkt_t rpkt;
+            int armed = 0, srv, rounds = 0;
+
+            memset(&rpkt, 0, sizeof(rpkt));
+            rpkt.data = rbuf; rpkt.size = 2048; rpkt.baddr = rbaddr;
+            if (rbuf) {
+                srv = bmd_rx_start(unit, &rpkt);
+                if (srv < 0) LOG("--rx-dump: bmd_rx_start rc=%d (%s)", srv, CDK_ERRMSG(srv));
+                else armed = 1;
+            }
+
+            while (armed) {
+                bmd_pkt_t *rp = NULL;
+                int rc2 = -1, k;
+
+                /* fire a broadcast stimulus out the looped SFP+ port: it egresses,
+                 * loops back as ingress, floods VLAN to CPU -> our armed RX. */
+                if (tbuf) {
+                    static const uint8_t bc[6] = {0xff,0xff,0xff,0xff,0xff,0xff};
+                    bmd_pkt_t tp;
+                    int b;
+                    memset(tbuf, 0, 64);
+                    memcpy(tbuf, bc, 6);
+                    tbuf[6]=0x02; tbuf[7]=0xed; tbuf[8]=0x60; tbuf[9]=0x00; tbuf[10]=0x00; tbuf[11]=0x01;
+                    tbuf[12]=0x08; tbuf[13]=0x06;   /* ARP ethertype */
+                    for (b = 14; b < 64; b++) tbuf[b] = (uint8_t)b;
+                    memset(&tp, 0, sizeof(tp));
+                    tp.port = loop_port; tp.data = tbuf; tp.size = 64; tp.baddr = tbaddr;
+                    {
+                        int trc = bmd_tx(unit, &tp);
+                        if (rounds == 0) LOG("--rx-dump: stimulus bmd_tx out port %d rc=%d (%s)",
+                                             loop_port, trc, trc == 0 ? "SENT" : CDK_ERRMSG(trc));
+                    }
+                }
+
+                for (k = 0; k < 50; k++) {   /* poll ~0.5s, then re-stimulate */
+                    rc2 = bmd_rx_poll(unit, &rp);
+                    if (rc2 == 0 && rp) break;
+                    { struct timespec ts = { .tv_sec = 0, .tv_nsec = 10*1000*1000 }; nanosleep(&ts, NULL); }
+                }
+
+                if (rc2 == 0 && rp) {
+                    uint8_t *d = rp->data;
+                    uint16_t eth = (uint16_t)((d[12] << 8) | d[13]);
+                    got++;
+                    LOG("RX #%d: %d bytes src_port %d  "
+                        "DA %02x:%02x:%02x:%02x:%02x:%02x SA %02x:%02x:%02x:%02x:%02x:%02x "
+                        "ethertype 0x%04x %s", got, rp->size, rp->port,
+                        d[0],d[1],d[2],d[3],d[4],d[5], d[6],d[7],d[8],d[9],d[10],d[11],
+                        eth, eth==0x0806?"ARP":eth==0x88cc?"LLDP":eth==0x0800?"IPv4":"");
+                    if (got <= 2) {
+                        int b; char hx[160]; int o = 0;
+                        for (b = 0; b < 48 && b < rp->size; b++)
+                            o += sprintf(hx + o, "%02x ", d[b]);
+                        LOG("RX #%d first48: %s", got, hx);
+                    }
+                    /* re-arm for the next frame */
+                    memset(&rpkt, 0, sizeof(rpkt));
+                    rpkt.data = rbuf; rpkt.size = 2048; rpkt.baddr = rbaddr;
+                    if (bmd_rx_start(unit, &rpkt) < 0) armed = 0;
+                }
+                if (++rounds % 20 == 0) LOG("--rx-dump: %d rounds, %d frames so far", rounds, got);
+            }
+        }
+        bmd_rx_stop(unit);
+        if (tbuf) bmd_dma_free_coherent(unit, 128, tbuf, tbaddr);
+        if (rbuf) bmd_dma_free_coherent(unit, 2048, rbuf, rbaddr);
+        LOG("--rx-dump: stopped (received %d frames)", got);
     }
 
     if (keep) {
