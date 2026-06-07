@@ -1353,6 +1353,8 @@ main(int argc, char *argv[])
             scan = 5;   /* exercise CPU<->chip DMA via the BDE coherent pool */
         } else if (!strcmp(argv[i], "--rx-dump")) {
             scan = 6;   /* resident RX: receive + decode frames punted to CPU */
+        } else if (!strcmp(argv[i], "--copper-dbg")) {
+            scan = 7;   /* read ge0 (jack 1) key MII regs to debug copper link */
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
             usage(argv[0]); return 0;
         } else {
@@ -1968,23 +1970,11 @@ main(int argc, char *argv[])
             LOG("--rx-dump: resident RX active — flood-to-CPU on default VLAN; "
                 "waiting for frames (run under `timeout`, Ctrl-C to stop)");
         }
-        /* TX stimulus: with the SFP+ ports physically loopbacked, a frame sent out
-         * a looped port returns as ingress and floods (VLAN) to the CPU — a
-         * deterministic RX trigger that doesn't depend on the link partner. */
-        dma_addr_t tbaddr = 0;
-        uint8_t *tbuf = rbuf ? bmd_dma_alloc_coherent(unit, 128, &tbaddr) : NULL;
-        /* TX out an XLPORT/SFP+ port times out (XLPORT egress-DMA issue, separate),
-         * but GE/copper TX works. Use a copper front port in MAC loopback as the RX
-         * stimulus: TX a broadcast to it, the MAC loops it back as ingress, and it
-         * floods VLAN 1 to the CPU — deterministic, no cabling, no XLPORT TX. */
-        int loop_port = (n_front > 0) ? front_ports[0] : 1;
-        int lrc = bmd_port_mode_set(unit, loop_port, bmdPortMode1000fd,
-                                    BMD_PORT_MODE_F_MAC_LOOPBACK);
-        bmd_vlan_port_add(unit, 1, loop_port, BMD_VLAN_PORT_F_UNTAGGED);
-        bmd_port_vlan_set(unit, loop_port, 1);
-        bmd_port_stp_set(unit, loop_port, bmdSpanningTreeForwarding);
-        LOG("--rx-dump: stimulus port %d -> 1G MAC-loopback (rc=%d) + VLAN 1 + forwarding",
-            loop_port, lrc);
+        /* PASSIVE RX: ports 1/2 are now on real networks, so real ingress traffic
+         * (ARP/broadcast on the subnet) floods VLAN 1 to the CPU — no TX stimulus
+         * needed. Ports were set to STP forwarding + default-VLAN by the bring-up;
+         * the CPU is a default-VLAN member (bmd_switching_init) so broadcast/DLF
+         * frames arriving on a forwarding port reach our armed RX descriptor. */
 
         /* Arm ONE RX descriptor up front. bmd_rx_poll clears it only on an actual
          * receive; on timeout it stays armed, so we re-arm only after a frame
@@ -2005,27 +1995,7 @@ main(int argc, char *argv[])
                 bmd_pkt_t *rp = NULL;
                 int rc2 = -1, k;
 
-                /* fire a broadcast stimulus out the looped SFP+ port: it egresses,
-                 * loops back as ingress, floods VLAN to CPU -> our armed RX. */
-                if (tbuf) {
-                    static const uint8_t bc[6] = {0xff,0xff,0xff,0xff,0xff,0xff};
-                    bmd_pkt_t tp;
-                    int b;
-                    memset(tbuf, 0, 64);
-                    memcpy(tbuf, bc, 6);
-                    tbuf[6]=0x02; tbuf[7]=0xed; tbuf[8]=0x60; tbuf[9]=0x00; tbuf[10]=0x00; tbuf[11]=0x01;
-                    tbuf[12]=0x08; tbuf[13]=0x06;   /* ARP ethertype */
-                    for (b = 14; b < 64; b++) tbuf[b] = (uint8_t)b;
-                    memset(&tp, 0, sizeof(tp));
-                    tp.port = loop_port; tp.data = tbuf; tp.size = 64; tp.baddr = tbaddr;
-                    {
-                        int trc = bmd_tx(unit, &tp);
-                        if (rounds == 0) LOG("--rx-dump: stimulus bmd_tx out port %d rc=%d (%s)",
-                                             loop_port, trc, trc == 0 ? "SENT" : CDK_ERRMSG(trc));
-                    }
-                }
-
-                for (k = 0; k < 50; k++) {   /* poll ~0.5s, then re-stimulate */
+                for (k = 0; k < 100; k++) {   /* poll ~1s between status ticks */
                     rc2 = bmd_rx_poll(unit, &rp);
                     if (rc2 == 0 && rp) break;
                     { struct timespec ts = { .tv_sec = 0, .tv_nsec = 10*1000*1000 }; nanosleep(&ts, NULL); }
@@ -2055,9 +2025,73 @@ main(int argc, char *argv[])
             }
         }
         bmd_rx_stop(unit);
-        if (tbuf) bmd_dma_free_coherent(unit, 128, tbuf, tbaddr);
         if (rbuf) bmd_dma_free_coherent(unit, 2048, rbuf, rbaddr);
         LOG("--rx-dump: stopped (received %d frames)", got);
+    }
+
+    /* --copper-dbg: after full bring-up (incl 54282 re-probe + bmd_phy_init), read
+     * ge0/jack-1's key clause-22 MII registers raw over the CMIC MIIM. The decisive
+     * one is reg5 (LPA / link-partner ability): non-zero => the copper line is
+     * hearing the partner's autoneg (physical RX good, problem is downstream);
+     * zero => the line is dead (still isolated / copper TX off / no partner). */
+    if (scan == 7) {
+        uint32_t a = CDK_XGSM_MIIM_EBUS(0) | 0x01;   /* jack 1 = ge0 */
+        uint32_t bmcr=0, bmsr=0, adv=0, lpa=0, k1g=0, s1g=0, ext=0;
+        int ge0 = 1, prc;
+
+        /* Force ge0 to explicit 1G full-duplex: the BMD GE branch requires speed==1000
+         * (Auto may not resolve, leaving the QSGMII SerDes/MAC unconfigured -> copper
+         * PMD gated -> LPA=0). This should configure the 56340 GE/QSGMII side. */
+        prc = bmd_port_mode_set(unit, ge0, bmdPortMode1000fd, 0);
+        LOG("--copper-dbg: bmd_port_mode_set(port %d, 1000fd) rc=%d (%s)",
+            ge0, prc, prc == 0 ? "OK" : CDK_ERRMSG(prc));
+        bmd_port_stp_set(unit, ge0, bmdSpanningTreeForwarding);
+        { struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 }; nanosleep(&ts, NULL); }
+        cdk_xgsm_miim_read(unit, a, 0x00, &bmcr);
+        cdk_xgsm_miim_read(unit, a, 0x01, &bmsr);
+        cdk_xgsm_miim_read(unit, a, 0x01, &bmsr);  /* latch-low: read twice */
+        cdk_xgsm_miim_read(unit, a, 0x04, &adv);   /* AN advertisement */
+        cdk_xgsm_miim_read(unit, a, 0x05, &lpa);   /* link-partner ability */
+        cdk_xgsm_miim_read(unit, a, 0x09, &k1g);   /* 1000BASE-T control */
+        cdk_xgsm_miim_read(unit, a, 0x0a, &s1g);   /* 1000BASE-T status */
+        cdk_xgsm_miim_read(unit, a, 0x0f, &ext);   /* ext status */
+        LOG("--copper-dbg jack1/ge0 @EBUS0|0x01:");
+        LOG("  BMCR(0)=%04x [AN_en=%d pwrdn=%d isolate=%d rst=%d spd=%s]",
+            bmcr&0xffff, !!(bmcr&0x1000), !!(bmcr&0x0800), !!(bmcr&0x0400),
+            !!(bmcr&0x8000), (bmcr&0x0040)?"1000":(bmcr&0x2000)?"100":"10");
+        LOG("  BMSR(1)=%04x [link=%d AN_done=%d AN_able=%d]",
+            bmsr&0xffff, !!(bmsr&0x0004), !!(bmsr&0x0020), !!(bmsr&0x0008));
+        LOG("  ADV(4)=%04x  LPA(5)=%04x  <== LPA!=0 means partner autoneg is HEARD",
+            adv&0xffff, lpa&0xffff);
+        LOG("  1000BT_CTRL(9)=%04x  1000BT_STAT(10)=%04x [LP_1000FD=%d rx_status=%d]",
+            k1g&0xffff, s1g&0xffff, !!(s1g&0x0800), !!(s1g&0x2000));
+        LOG("  EXT_STAT(15)=%04x", ext&0xffff);
+
+        /* Sweep ALL 48 copper jacks for any sign of a live partner: reg5 LPA != 0
+         * or reg1 link or reg10 rx_status. If exactly one lights up, that's the
+         * connected jack (and reveals the true jack->PHY-addr mapping); if none, the
+         * copper PMD is universally inactive (QSGMII system side / board). */
+        {
+            int bus, addr;
+            LOG("--copper-dbg: full sweep for partner activity (LPA/link/rx):");
+            for (bus = 0; bus <= 1; bus++) {
+                for (addr = 1; addr <= 0x1c; addr++) {
+                    uint32_t aa = (bus ? CDK_XGSM_MIIM_EBUS(1) : CDK_XGSM_MIIM_EBUS(0)) | addr;
+                    uint32_t id=0, st=0, lp=0, s10=0;
+                    cdk_xgsm_miim_read(unit, aa, 0x02, &id);
+                    if ((id & 0xffff) != 0x600d) continue;   /* not a 54282 */
+                    cdk_xgsm_miim_read(unit, aa, 0x01, &st);
+                    cdk_xgsm_miim_read(unit, aa, 0x01, &st);
+                    cdk_xgsm_miim_read(unit, aa, 0x05, &lp);
+                    cdk_xgsm_miim_read(unit, aa, 0x0a, &s10);
+                    if ((lp & 0xffff) || (st & 0x4) || (s10 & 0x2000)) {
+                        LOG("  *** EBUS%d 0x%02x: link=%d LPA=%04x 1000BTstat=%04x  <== PARTNER ACTIVITY",
+                            bus, addr, !!(st&0x4), lp&0xffff, s10&0xffff);
+                    }
+                }
+            }
+            LOG("--copper-dbg: sweep done (no '***' lines above = no jack hears a partner)");
+        }
     }
 
     if (keep) {
