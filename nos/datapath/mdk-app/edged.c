@@ -2284,24 +2284,21 @@ main(int argc, char *argv[])
 
         drc = bmd_xgsm_dma_init(unit);
         LOG("--lb-test: dma_init rc=%d; port %d", drc, lp);
-        /* Use the bring-up's port config (mode_set 1000fd here forces AN off and
-         * breaks TX); just reconcile the MAC + VLAN/STP like the working --rx-dump. */
-        bmd_port_mode_update(unit, lp);
+        /* LINE-side loopback via BMD's F_PHY_LOOPBACK: bmd puts the external 54282
+         * into loopback and configures the MAC/port for it. A CPU-injected frame
+         * egresses MAC->QSGMII->54282, loops there, and returns ->QSGMII->MAC RX
+         * -> L2 flood (VLAN1, CPU member) -> CMICm RX DMA. Egress stays intact (the
+         * loopback is at the line PHY, not the serdes which broke egress). */
+        drc = bmd_port_mode_set(unit, lp, bmdPortMode1000fd, BMD_PORT_MODE_F_PHY_LOOPBACK);
+        LOG("--lb-test: port_mode_set 1000fd + PHY_LOOPBACK rc=%d (%s)",
+            drc, drc==0?"OK":CDK_ERRMSG(drc));
         bmd_vlan_port_add(unit, 1, lp, BMD_VLAN_PORT_F_UNTAGGED);
         bmd_port_vlan_set(unit, lp, 1);
         bmd_port_stp_set(unit, lp, bmdSpanningTreeForwarding);
+        bmd_port_mode_update(unit, lp);
         l3_mac_rx_enable(unit, lp);
-        /* engage internal serdes loopback */
-        for (pc = BMD_PORT_PHY_CTRL(unit, lp); pc; pc = pc->next)
-            if (pc->drv && pc->drv->drv_name &&
-                !strcmp(pc->drv->drv_name, "bcmi_qsgmii_serdes")) { sd = pc; break; }
-        if (sd && sd->drv->pd_loopback_set) {
-            int lrc = PHY_LOOPBACK_SET(sd, 1);
-            LOG("--lb-test: QSGMII serdes loopback ON (rc=%d)", lrc);
-        } else {
-            LOG("--lb-test: no serdes loopback available");
-        }
-        l3_mac_rx_enable(unit, lp);   /* re-assert after loopback set */
+        { struct timespec ts={.tv_sec=1,.tv_nsec=0}; nanosleep(&ts,NULL); }
+        (void)pc; (void)sd;
 
         if (rbuf && tbuf) {
             bmd_pkt_t rpkt;
