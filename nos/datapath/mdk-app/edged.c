@@ -1249,17 +1249,17 @@ qsgmii_serdes_passthru_setup(int unit, int port)
         }
         reset_done = 1;
     }
-    /* 2. MII_CTRL = FULL_DUPLEX(b8) | SS_1000(b6) | AUTONEG_EN(b12) | RESTART_AN(b9). */
-    phy_aer_iblk_write(sd, 0x50000000, (1u<<8)|(1u<<6)|(1u<<12)|(1u<<9));
-    /* 3. MII_ANA (reg4) = C37 advert: FD(b5) | PAUSE(b7) | ASYM_PAUSE(b8). */
-    phy_aer_iblk_write(sd, 0x50000004, (1u<<5)|(1u<<7)|(1u<<8));
-    /* 4. CONTROL1000X1: FIBER_MODE_1000X(b0)=0 (SGMII — OpenMDK only links with this
-     *    clear, vs the full SDK which sets it + an extra XGXS override we lack),
-     *    DISABLE_PLL_PWRDWN(b6)=1, SGMII_MASTER_MODE(b5)=0 (slave), AUTODET_EN(b4)=0. */
+    /* 2. MII_CTRL = FULL_DUPLEX(b8) | SS_1000(b6), autoneg DISABLED (forced) — bare
+     *    FIBER_MODE=0 links forced; enabling AN breaks the link here. The full SDK uses
+     *    FILTER_FORCE_LINK exactly for this forced (AN-disabled) case. */
+    phy_aer_iblk_write(sd, 0x50000000, (1u<<8)|(1u<<6));
+    /* 3. CONTROL1000X1: FIBER_MODE_1000X(b0)=0 (SGMII, links), DISABLE_PLL_PWRDWN(b6)=1,
+     *    SGMII_MASTER_MODE(b5)=0 (slave), AUTODET_EN(b4)=0. */
     phy_aer_iblk_read(sd, 0x50008300, &v);
     v = (v & ~((1u<<0)|(1u<<4)|(1u<<5))) | (1u<<6);
     phy_aer_iblk_write(sd, 0x50008300, v);
-    /* 5. CONTROL1000X2: ENABLE_PARALLEL_DETECTION(b0)=1, FILTER_FORCE_LINK(b2)=1,
+    /* 4. CONTROL1000X2: ENABLE_PARALLEL_DETECTION(b0)=1, FILTER_FORCE_LINK(b2)=1
+     *    (force link valid after sync in forced mode — lets RX data pass),
      *    FORCE_XMIT_DATA_ON_TXSIDE(b5)=0. */
     phy_aer_iblk_read(sd, 0x50008301, &v);
     v = (v & ~(1u<<5)) | (1u<<0) | (1u<<2);
@@ -2102,15 +2102,17 @@ main(int argc, char *argv[])
                             live_port, up?"UP":"down", up?"enabled":"held"); was_up = up;
                         if (up) l3_mac_rx_enable(unit, live_port);
                     }
-                    /* Re-assert SGMII passthru on the serdes (the one config that links;
-                     * the fuller qsgmii_serdes_passthru_setup() either doesn't link or
-                     * links-without-RX — QSGMII RX needs coordinated serdes+54282 SGMII-AN
-                     * config, a holistic qsgmii65 port / ICOS-value capture, TODO). */
+                    /* Forced-mode QSGMII serdes config: FIBER_MODE=0 (links) + no autoneg
+                     * + FILTER_FORCE_LINK + PARALLEL_DETECT — the full SDK's AN-disabled
+                     * path, which should let RX data pass (vs bare passthru that linked
+                     * but dropped RX). bmd_port_mode_update reverts it, so re-apply. */
+                    qsgmii_serdes_passthru_setup(unit, live_port);
                     for (pc = BMD_PORT_PHY_CTRL(unit, live_port); pc != NULL; pc = pc->next)
                         if (pc->drv && pc->drv->drv_name &&
                             !strcmp(pc->drv->drv_name, "bcmi_qsgmii_serdes")) {
-                            PHY_NOTIFY(pc, PhyEvent_ChangeToPassthru); break; }
-                    (void)qsgmii_serdes_passthru_setup;
+                            if (pc->drv->pd_link_get) { PHY_LINK_GET(pc, &sl, &sa); PHY_LINK_GET(pc, &sl, &sa); }
+                            break; }
+                    if (sl != was_sl) { LOG("--rx-dump: QSGMII serdes link=%d (forced+filter)", sl); was_sl = sl; }
                     for (pc = BMD_PORT_PHY_CTRL(unit, live_port); pc != NULL; pc = pc->next) {
                         if (pc->drv && pc->drv->drv_name &&
                             !strcmp(pc->drv->drv_name, "bcmi_qsgmii_serdes")) {
