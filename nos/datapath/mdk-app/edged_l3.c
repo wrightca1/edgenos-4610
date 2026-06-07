@@ -50,6 +50,29 @@ static int n_intf;
 static struct { uint32_t prefix; int len; int nh_idx; int defip_idx; } route_tab[MAX_ROUTE];
 static int n_route;
 
+/* Force the XMAC RX/TX enable on a port: bmd_port_mode_update only toggles
+ * SOFT_RESET, and a port whose mode resolved to "other" can be left with RX_EN=0
+ * (so it TXes but never receives — MAC rx_pkts stays 0). Returns the XMAC_CTRL
+ * value after, or 0xffffffff on I/O error. Reports before/after. */
+uint32_t
+l3_mac_rx_enable(int unit, int port)
+{
+    XMAC_CTRLr_t c;
+    uint32_t before, after;
+    int ioerr = 0;
+    ioerr += READ_XMAC_CTRLr(unit, port, &c);
+    before = XMAC_CTRLr_GET(c, 0);
+    XMAC_CTRLr_SOFT_RESETf_SET(c, 0);
+    XMAC_CTRLr_RX_ENf_SET(c, 1);
+    XMAC_CTRLr_TX_ENf_SET(c, 1);
+    ioerr += WRITE_XMAC_CTRLr(unit, port, c);
+    ioerr += READ_XMAC_CTRLr(unit, port, &c);
+    after = XMAC_CTRLr_GET(c, 0);
+    L3LOG("port %d XMAC_CTRL %08x -> %08x [rx_en=%d tx_en=%d soft_rst=%d]",
+          port, before, after, !!(after & 0x2), !!(after & 0x1), !!(after & 0x40));
+    return ioerr ? 0xffffffff : after;
+}
+
 /* phys -> logical port (the number the ingress pipeline / PBMP use). */
 static int
 p2l(int unit, int port)

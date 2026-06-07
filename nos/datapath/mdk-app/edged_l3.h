@@ -45,6 +45,9 @@ int l3_route_add(int unit, uint32_t prefix, int len, int nh_idx);
 /* Read back and print every L3 table entry programmed so far (verification). */
 void l3_show(int unit);
 
+/* Force XMAC RX_EN+TX_EN (and clear SOFT_RESET) on a port. Returns XMAC_CTRL after. */
+uint32_t l3_mac_rx_enable(int unit, int port);
+
 /*
  * Load and program an L3 config file. Format (whitespace-separated, # comments):
  *   intf  <vlan> <port> <router-mac>           e.g.  intf 11 53 00:11:22:33:44:55

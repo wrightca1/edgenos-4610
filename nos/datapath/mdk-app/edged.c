@@ -2029,8 +2029,14 @@ main(int argc, char *argv[])
                     bmd_port_mode_update(unit, live_port);
                     bmd_port_mode_get(unit, live_port, &pm, &pf);
                     up = !!(pf & BMD_PORT_MODE_F_LINK_UP);
-                    if (up != was_up) { LOG("--rx-dump: live port %d link %s (MAC %s)",
-                        live_port, up?"UP":"down", up?"enabled":"held"); was_up = up; }
+                    if (up != was_up) {
+                        LOG("--rx-dump: live port %d link %s (MAC %s)",
+                            live_port, up?"UP":"down", up?"enabled":"held"); was_up = up;
+                        /* port_mode_update only clears SOFT_RESET; force RX_EN/TX_EN so
+                         * the MAC actually receives (a port left at RX_EN=0 TXes but
+                         * counts rx_pkts=0). */
+                        if (up) l3_mac_rx_enable(unit, live_port);
+                    }
                 }
 
                 /* TX a broadcast ARP request out the live port (10.14.1.253 -> who-has
