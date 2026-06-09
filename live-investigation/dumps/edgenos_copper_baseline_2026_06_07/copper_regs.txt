@@ -1,0 +1,64 @@
+edged: EdgeNOS-4610 data-plane daemon starting
+edged: device 0x14e4:0xb340 rev 0x01, CMIC @ phys 0x48000000 (/dev/mem)
+edged: ext-phy: deasserted CPLD reset (0x19=0x00 0x1b=0x00 verified)
+edged: ext-mdio: wrote 22 ICOS CMIC MIIM bus-map regs @0x48011000
+edged: [1/6] attach        OK
+edged: [2/6] bmd_reset     OK  (core PLL + clocks up)
+edged: ext-mdio: wrote 22 ICOS CMIC MIIM bus-map regs @0x48011000
+edged-dma: DMA pool ready: virt 0xb65c6000 bus 0x90100000 size 8192 KB (uncached, via linux-bde)
+edged: [3/6] bmd_init      OK  (SCHAN core access working)
+edged: ext-mdio: wrote 22 ICOS CMIC MIIM bus-map regs @0x48011000
+edged: ext-copper: re-probed 48 ports, 48 now bound bcm54282
+edged: [4/6] swinit        OK  (L2 switching initialized)
+edged: [5/6] ports        55/61 front ports up (native speed)
+edged:        SFP+ port 53 -> 10G XFI
+edged:        SFP+ port 54 -> 10G XFI
+edged:        SFP+ port 55 -> 10G XFI
+edged:        SFP+ port 56 -> 10G XFI
+edged: [6/6] L2 forward   55/55 ports set to STP FORWARDING (VLAN 1)
+edged: inventory: 0×1G  4×10G  0×20G  51×other
+edged: 84758(xe0) PMA-PMD ID1=0x86f0  fw-checksum(1.0xca1c)=0x600d <== UCODE LOADED
+edged: SFP+ media-RX bring-up: disable -> optical config -> enable (ICOS order)
+edged: SFP+ 84758 WHOLESALE re-init (chip-mode->L2P->reset+re-ucode->config->enable):
+edged:     xe0 re-ucode checksum = 0x600d (OK)
+edged: SFP+ Warpcore fw-pause RX re-arm (UC_CTRL 0x820e STOP/RESUME/RESTART):
+edged:   port 53: Warpcore fw-pause re-arm (lane 0) done
+edged:   port 54: Warpcore fw-pause re-arm (lane 1) done
+edged:   port 55: Warpcore fw-pause re-arm (lane 2) done
+edged:   port 56: Warpcore fw-pause re-arm (lane 3) done
+edged: SFP+ 84758 media-RX re-acquire (EDC LOS-toggle, robo2 edc_mode_set):
+edged: SFP+ port 53 optical link UP -> MAC forwarding
+edged: SFP+ port 54 optical link UP -> MAC forwarding
+edged: SFP+ port 55 optical link down -> MAC held
+edged: SFP+ port 56 optical link down -> MAC held
+edged: data plane UP: BCM56340 initialized, switching-ready, ports forwarding
+edged-l3: port 26 XMAC_CTRL 00000043 -> 00000003 [rx_en=1 tx_en=1 soft_rst=0] SPEED_MODE=2 (1G)
+edged: --rx-dump: 54282 SGMII_SLAVE=5580 [sys_link(b9)=0 dup(b8)=1 spd(b6:7)=2 auto_det(b0)=0 slave_mode(b1)=0]
+edged: --rx-dump: 54282 set SGMII_SLAVE_AUTO_DETECT (was 5580)
+edged: --copper-regs: snapshot for ge25/CDK 26 (diff target = working ICOS)
+edged:   [54282 std MII 0x00-0x1f]
+edged:     0x00:1140 0x01:79ed 0x02:600d 0x03:845b 0x04:01e1 0x05:c9e1 0x06:006d 0x07:2001 
+edged:     0x08:47e6 0x09:0300 0x0a:3c00 0x0b:0000 0x0c:0000 0x0d:4007 0x0e:0000 0x0f:3000 
+edged:     0x10:0022 0x11:0301 0x12:0000 0x13:0000 0x14:0000 0x15:0000 0x16:0000 0x17:0f7e 
+edged:     0x18:4c00 0x19:871c 0x1a:243e 0x1b:ffff 0x1c:5581 0x1d:3286 0x1e:0000 0x1f:0000 
+edged:   [54282 brcm-shadow]
+edged:     SGMII_SLAVE   (0x235) = 5581 (rc=0)
+edged:     MODE_CONTROL  (0x21)  = 79ed (rc=0)
+edged:     AUTO_DET_MED  (0x23e) = 0000 (rc=0)
+edged:     MISC_1000X    (0x16)  = 0000 (rc=0)
+edged:     EXT_SERDES_CTL(0x234) = ffff (rc=0)
+edged:     EXP_PKT_COUNTER       = 0000 (rc=0)
+edged:   [internal QSGMII serdes (AER, port 26's lane)]
+edged:     MIICNTL       (0x0)    = 0140 (rc=0)
+edged:     MII_ANA       (0x4)    = 0180 (rc=0)
+edged:     MII_STATUS    (0x1)    = 0129 (rc=0)
+edged:     CONTROL1000X1 (0x8300) = 01cc (rc=0)
+edged:     CONTROL1000X2 (0x8301) = 0007 (rc=0)
+edged:     CONTROL1000X3 (0x8302) = 0002 (rc=0)
+edged:     XGXSBLK0_CTRL (0x8000) = 262f (rc=0)
+edged:     LANE_CTRL0    (0x8015) = 11ff (rc=0)
+edged: --copper-regs: done
+bcm56340_a0_bmd_init[0]: port 49, failed while recovering XLPORT underrun
+bcm56340_a0_bmd_init[0]: XLPORT txfifo check failed (rv=-9) — advisory, continuing (edged debugs DMA via --dma-test)
+bcm56340_a0_bmd_init[0]: port 49, failed while recovering XLPORT underrun
+bcm56340_a0_bmd_init[0]: XLPORT txfifo check failed (rv=-9) — advisory, continuing (edged debugs DMA via --dma-test)

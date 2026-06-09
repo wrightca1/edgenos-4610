@@ -15,7 +15,7 @@ dur = float(sys.argv[1]) if len(sys.argv) > 1 else 40.0
 key = (sys.argv[2] if len(sys.argv) > 2 else " ").encode().decode("unicode_escape").encode("latin-1")
 
 # U-Boot prompt candidates (line-leading)
-PROMPTS = [b"=>", b"u-boot>", b"Marvell>>", b"BCM.", b"ar7240>"]
+PROMPTS = [b"=>", b"u-boot>", b"Marvell>>", b"BCM.", b"ar7240>", b"accton_as4610-54->", b"accton_as4610"]
 
 s = serial.Serial(PORT, BAUD, timeout=0.1)
 buf = bytearray()

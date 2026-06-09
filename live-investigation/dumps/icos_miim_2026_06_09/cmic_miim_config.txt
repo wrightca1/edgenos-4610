@@ -1,0 +1,22 @@
+ICOS 3.4.3.7 AS4610-54T — CMIC MIIM config (the working SDK reaches BCM84758 @ phy addr 0x40):
+CMIC_RATE_ADJUST_EXT_MDIO  [cmic0 off 0x11000] = 0x10018  (DIVISOR=0x18, DIVIDEND=1)  <-- external MDIO clock
+CMIC_RATE_ADJUST_INT_MDIO  [cmic0 off 0x11004] = 0x10012  (DIVISOR=0x12, DIVIDEND=1)
+CMIC_MIIM_CONFIG           [cmic0 off 0x11184] = 0x3      (MDIO_OUT_DELAY=3)
+CMIC base on AS4610 = 0x48000000 -> EXT_MDIO abs = 0x48011000, INT=0x48011004, MIIM_CONFIG=0x48011184
+phy info: xe0(50)=600d:86f0 addr 0x40 (BCM84758) + 0xc1 (Warpcore); xe1-3=0x41-0x43.
+HYPOTHESIS: bcmd's SDK leaves EXT_MDIO rate-adjust at 0/wrong so the external MDIO bus never clocks
+-> soc_miimc45 to external phy_id (0x40) returns 0xffff. FIX: set 0x48011000=0x10018 before MIIM access.
+
+*** THE KEY REG ***
+CMIC_MIIM_SCAN_CTRL [cmic0 off 0x11008] = 0x30001000:
+   OVER_RIDE_EXT_MDIO_MSTR_CNTRL=1  <-- "MUST BE 1" for CMIC to be MDIO master (reach external PHYs)
+   MIIM_ADDR_MAP_ENABLE=1
+   abs addr = 0x48011008
+=> If bcmd's SDK has OVER_RIDE_EXT_MDIO_MSTR_CNTRL=0, the CMIC is NOT the external MDIO master,
+   so soc_miimc45 to the external 84758 (phy_id 0x40) returns 0xffff. FIX on EdgeNOS/bcmd:
+   set 0x48011008 bit (OVER_RIDE_EXT_MDIO_MSTR_CNTRL=1) + 0x48011000=0x10018, then soc_miimc45 reaches the 84758.
+
+*** VALIDATION: port 49 (xe0) LINKS UP at 10G in ICOS ***
+  ps xe0:  xe0  up   10G  FD  SW  No  Forward  XGMII 1518
+  (all ge0-47 copper = down/Disable in ICOS default config)
+=> Router/optic/fiber/84758/serdes all work. bcmd's ONLY gap = the CMIC MIIM ext-master config above.

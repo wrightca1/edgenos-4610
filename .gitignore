@@ -37,3 +37,8 @@ nos/datapath/phy84758-src/*
 nos/datapath/mdk-app/edged
 live-investigation/sdk-ref/
 nos/datapath/artifacts/
+
+# bcmd build outputs (huge full-SDK binaries + diag shell) — source only in git
+nos/datapath/bcmd/bcmd
+nos/datapath/bcmd/bcm.user
+nos/datapath/bcmd/sfp_laser

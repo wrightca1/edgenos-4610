@@ -71,6 +71,20 @@ see light.
 
 ## What's left: the optical PCS lock
 
+> **RESOLVED 2026-06-09 (full-SDK `bcmd` path + ICOS A/B test).** The optical
+> PCS-lock failure was traced to **two** causes, both now understood:
+> 1. **External PHYs held in CPLD reset** (`CPLD 0x19=0x7f/0x1b=0xef`) — MIIM to
+>    the 84758 returned `0xffff`. Cleared before init in `bcmd`/`bringup-bcmd.sh`
+>    → 84758 reachable, firmware loads, **port links at 10G with block-lock**.
+> 2. **Optical overdrive** on the live link — far-side RX **+2.96 dBm
+>    (RX-POWER-HIGH alarm)** saturates the receiver → no stable lock / chip RX=0.
+>    Confirmed by an A/B test: **stock ICOS fails identically** on the same link
+>    (`show interface 0/49` Packets Received = 0, ping unreachable) → it is the
+>    hot optical link, **not** the software. Fix = ~5 dB inline attenuator.
+>
+> See [`bcmd/README.md`](bcmd/README.md) for the full resolution. The text below
+> is the earlier OpenMDK/`edged` analysis, retained for history.
+
 With the MAC at 10G, lasers on, light flowing, and compatible modules (both
 1310nm dual-fiber LR — see `../../live-investigation/dumps/sfp_eeprom_dom_2026_06_06.md`),
 the 84758 still reports `sigdet=0` / no 10GBASE-R block-lock.

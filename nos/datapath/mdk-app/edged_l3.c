@@ -66,6 +66,13 @@ l3_mac_rx_enable(int unit, int port)
     XMAC_CTRLr_SOFT_RESETf_SET(c, 0);
     XMAC_CTRLr_RX_ENf_SET(c, 1);
     XMAC_CTRLr_TX_ENf_SET(c, 1);
+    /* THE copper-RX gate (ICOS-verified, 2026-06-07): on these QSGMII GE ports the
+     * XMAC takes its link state from SW_LINK_STATUS. bmd leaves it 0 -> the MAC treats
+     * the link as DOWN and drops ALL ingress (TX is unaffected), so rx_pkts stays 0
+     * even with the serdes linked. ICOS sets XMAC_CTRL=0x1803 (SW_LINK_STATUS=1 +
+     * XGMII_IPG_CHECK_DISABLE=1) vs our 0x0003. Match it. */
+    XMAC_CTRLr_SW_LINK_STATUSf_SET(c, 1);
+    XMAC_CTRLr_XGMII_IPG_CHECK_DISABLEf_SET(c, 1);
     ioerr += WRITE_XMAC_CTRLr(unit, port, c);
     ioerr += READ_XMAC_CTRLr(unit, port, &c);
     after = XMAC_CTRLr_GET(c, 0);
@@ -76,6 +83,107 @@ l3_mac_rx_enable(int unit, int port)
     L3LOG("port %d XMAC_CTRL %08x -> %08x [rx_en=%d tx_en=%d soft_rst=%d] SPEED_MODE=%u (%s)",
           port, before, after, !!(after & 0x2), !!(after & 0x1), !!(after & 0x40),
           spd, spd==2?"1G":spd==4?"10G":spd==1?"100M":spd==0?"10M":"?");
+    return ioerr ? 0xffffffff : after;
+}
+
+/*
+ * Read + log the XMAC RX link-status-signaling state. For a 1G SGMII/QSGMII copper
+ * port the 10G-style LSS faults (local/remote/link-interruption) must be DISABLED —
+ * else the XMAC sits in a fault state and silently drops all RX while TX still works,
+ * which is exactly the chip-serdes-link-up-but-rx_pkts=0 symptom.
+ */
+void
+l3_mac_rx_diag(int unit, int port)
+{
+    XMAC_RX_LSS_STATUSr_t st;
+    XMAC_RX_LSS_CTRLr_t ct;
+    int ioerr = 0;
+    uint32_t lf, rf, li, lfd, rfd, lid, stv, ctv;
+
+    ioerr += READ_XMAC_RX_LSS_STATUSr(unit, port, &st);
+    stv = XMAC_RX_LSS_STATUSr_GET(st, 0);
+    lf  = XMAC_RX_LSS_STATUSr_LOCAL_FAULT_STATUSf_GET(st);
+    rf  = XMAC_RX_LSS_STATUSr_REMOTE_FAULT_STATUSf_GET(st);
+    li  = XMAC_RX_LSS_STATUSr_LINK_INTERRUPTION_STATUSf_GET(st);
+    ioerr += READ_XMAC_RX_LSS_CTRLr(unit, port, &ct);
+    ctv = XMAC_RX_LSS_CTRLr_GET(ct, 0);
+    lfd = XMAC_RX_LSS_CTRLr_LOCAL_FAULT_DISABLEf_GET(ct);
+    rfd = XMAC_RX_LSS_CTRLr_REMOTE_FAULT_DISABLEf_GET(ct);
+    lid = XMAC_RX_LSS_CTRLr_LINK_INTERRUPTION_DISABLEf_GET(ct);
+
+    L3LOG("port %d RX-diag: LSS_STATUS=%08x [local_fault=%u remote_fault=%u link_intr=%u] "
+          "LSS_CTRL=%08x [lf_dis=%u rf_dis=%u li_dis=%u] %s",
+          port, stv, lf, rf, li, ctv, lfd, rfd, lid,
+          ((lf && !lfd) || (rf && !rfd) || (li && !lid)) ?
+              "<== FAULT active + NOT disabled — XMAC drops RX!" : "");
+    (void)ioerr;
+}
+
+/*
+ * THE candidate fix: bcm56340 bmd_init hardcodes PORT_MODE_REG.XPCn_GMII_MII_ENABLE=0
+ * for every port (incl the 1G QSGMII GE ports), but the full SDK sets it to 1 for any
+ * sub-10G port (xmac.c: PORT_GMII_MII_ENABLE = speed>=10000 ? 0 : 1). With it 0 the
+ * XMAC runs in 10G XGMII framing and cannot decode the 1G GMII RX stream coming off the
+ * QSGMII deframer -> rx_pkts stays 0 even though the serdes links and TX works.
+ * Set all three XPC GMII_MII_ENABLE bits in this port's PORT_MODE_REG to 1 (the GE block
+ * is all 1G), with an XMAC soft-reset around the write so the mode change takes effect.
+ * Logs before/after. Returns PORT_MODE_REG after.
+ */
+uint32_t
+l3_mac_gmii_enable(int unit, int port)
+{
+    PORT_MODE_REGr_t pm;
+    XMAC_CTRLr_t c;
+    uint32_t before, after;
+    int ioerr = 0;
+
+    ioerr += READ_PORT_MODE_REGr(unit, &pm, port);
+    before = PORT_MODE_REGr_GET(pm);
+    L3LOG("port %d PORT_MODE_REG=%08x [xpc0_gmii=%u xpc1_gmii=%u xpc2_gmii=%u "
+          "xp0_phy=%u xp0_core=%u]", port, before,
+          PORT_MODE_REGr_XPC0_GMII_MII_ENABLEf_GET(pm),
+          PORT_MODE_REGr_XPC1_GMII_MII_ENABLEf_GET(pm),
+          PORT_MODE_REGr_XPC2_GMII_MII_ENABLEf_GET(pm),
+          PORT_MODE_REGr_XPORT0_PHY_PORT_MODEf_GET(pm),
+          PORT_MODE_REGr_XPORT0_CORE_PORT_MODEf_GET(pm));
+
+    PORT_MODE_REGr_XPC0_GMII_MII_ENABLEf_SET(pm, 1);
+    PORT_MODE_REGr_XPC1_GMII_MII_ENABLEf_SET(pm, 1);
+    PORT_MODE_REGr_XPC2_GMII_MII_ENABLEf_SET(pm, 1);
+
+    /* XMAC soft-reset around the mode change. */
+    ioerr += READ_XMAC_CTRLr(unit, port, &c);
+    XMAC_CTRLr_SOFT_RESETf_SET(c, 1);
+    ioerr += WRITE_XMAC_CTRLr(unit, port, c);
+    ioerr += WRITE_PORT_MODE_REGr(unit, pm, port);
+    XMAC_CTRLr_SOFT_RESETf_SET(c, 0);
+    XMAC_CTRLr_RX_ENf_SET(c, 1);
+    XMAC_CTRLr_TX_ENf_SET(c, 1);
+    ioerr += WRITE_XMAC_CTRLr(unit, port, c);
+
+    ioerr += READ_PORT_MODE_REGr(unit, &pm, port);
+    after = PORT_MODE_REGr_GET(pm);
+    L3LOG("port %d PORT_MODE_REG -> %08x [xpc0_gmii=%u] (GMII_MII_ENABLE set)",
+          port, after, PORT_MODE_REGr_XPC0_GMII_MII_ENABLEf_GET(pm));
+    return ioerr ? 0xffffffff : after;
+}
+
+/* Force-disable the XMAC RX LSS faults so a 1G SGMII port stops dropping RX on
+ * phantom 10G faults. Returns LSS_CTRL after. */
+uint32_t
+l3_mac_lss_disable(int unit, int port)
+{
+    XMAC_RX_LSS_CTRLr_t ct;
+    int ioerr = 0;
+    uint32_t after;
+    ioerr += READ_XMAC_RX_LSS_CTRLr(unit, port, &ct);
+    XMAC_RX_LSS_CTRLr_LOCAL_FAULT_DISABLEf_SET(ct, 1);
+    XMAC_RX_LSS_CTRLr_REMOTE_FAULT_DISABLEf_SET(ct, 1);
+    XMAC_RX_LSS_CTRLr_LINK_INTERRUPTION_DISABLEf_SET(ct, 1);
+    ioerr += WRITE_XMAC_RX_LSS_CTRLr(unit, port, ct);
+    ioerr += READ_XMAC_RX_LSS_CTRLr(unit, port, &ct);
+    after = XMAC_RX_LSS_CTRLr_GET(ct, 0);
+    L3LOG("port %d LSS faults disabled -> LSS_CTRL=%08x", port, after);
     return ioerr ? 0xffffffff : after;
 }
 

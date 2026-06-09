@@ -74,6 +74,7 @@ union i2c_smbus_data {
 #include <phy/phy_drvlist.h>
 #include <phy/phy_aer_iblk.h>
 #include <phy/phy_brcm_shadow.h>   /* read 54282 EXP_PKT_COUNTER (copper RX/TX count) */
+#include <phy/phy_reg.h>           /* phy_reg_read: 54282 standard MII regs */
 
 #include "linux_shbde.h"
 #include "edged_l3.h"
@@ -1238,6 +1239,15 @@ qsgmii_serdes_passthru_setup(int unit, int port)
     }
     if (!sd) return;
 
+    /* SGMII-AUTONEG mode — what ICOS uses (config: phy_sgmii_autoneg_ge=1, confirmed
+     * via the ICOS reflash capture 2026-06-07). The SDK qsgmii65 init distinguishes
+     * PASSTHRU (AN + FIBER_MODE=1) from SGMII_AUTONEG (AN + FIBER_MODE=0, SGMII mode,
+     * NO filter-force). My two prior attempts were forced (FIBER_MODE=0, AN OFF, links
+     * but no RX) and AN-passthru (FIBER_MODE=1, AN ON, regressed). This is the untried
+     * correct combination: FIBER_MODE=0 (SGMII) + AN ENABLED — so the chip serdes does
+     * the SGMII config-word handshake with the 54282 (which sends the word by default),
+     * which is what makes the PHY->chip RX data path forward. */
+
     /* 1. Reset the serdes once (OpenMDK never does — full SDK resets in init). */
     if (!reset_done) {
         phy_aer_iblk_read(sd, 0x50000000, &v);
@@ -1249,21 +1259,120 @@ qsgmii_serdes_passthru_setup(int unit, int port)
         }
         reset_done = 1;
     }
-    /* 2. MII_CTRL = FULL_DUPLEX(b8) | SS_1000(b6), autoneg DISABLED (forced) — bare
-     *    FIBER_MODE=0 links forced; enabling AN breaks the link here. The full SDK uses
-     *    FILTER_FORCE_LINK exactly for this forced (AN-disabled) case. */
-    phy_aer_iblk_write(sd, 0x50000000, (1u<<8)|(1u<<6));
-    /* 3. CONTROL1000X1: FIBER_MODE_1000X(b0)=0 (SGMII, links), DISABLE_PLL_PWRDWN(b6)=1,
-     *    SGMII_MASTER_MODE(b5)=0 (slave), AUTODET_EN(b4)=0. */
+    /* 1b. QSGMII lane override (SDK qsgmii65.c:157-189, case 1 "QSGMII mode"). Normally
+     *     gated by spn_SERDES_QSGMII_SGMII_OVERRIDE (default off → H/W default), but our
+     *     H/W default may not have it. Commit via XGXSBLK0_XGXSCONTROL bit 0x2000
+     *     toggle around LANE_CTRL0=0x1100 (mask 0xff00). This (re)initializes the QSGMII
+     *     deframer lane mapping — the one SDK serdes-init step edged omitted. */
+    phy_aer_iblk_read(sd, 0x50008000, &v); v &= ~0x2000u; phy_aer_iblk_write(sd, 0x50008000, v);
+    phy_aer_iblk_read(sd, 0x50008015, &v); v = (v & ~0xff00u) | 0x1100u; phy_aer_iblk_write(sd, 0x50008015, v);
+    phy_aer_iblk_read(sd, 0x50008000, &v); v |= 0x2000u; phy_aer_iblk_write(sd, 0x50008000, v);
+    /* 2. MII_ANA (0x4) = C37 advertisement FD(b5)|PAUSE(b7)|ASYM(b8) — written when AN on. */
+    phy_aer_iblk_write(sd, 0x50000004, (1u<<5)|(1u<<7)|(1u<<8));   /* 0x01A0 */
+    /* 3. MII_CTRL = FD(b8)|SS_1000(b6)|AUTONEG_EN(b12)|RESTART_AN(b9) — SGMII AN. 0x1340. */
+    phy_aer_iblk_write(sd, 0x50000000, (1u<<8)|(1u<<6)|(1u<<12)|(1u<<9));
+    /* 4. CONTROL1000X1: FIBER_MODE_1000X(b0)=0 (SGMII mode — the key vs passthru),
+     *    DISABLE_PLL_PWRDWN(b6)=1, SGMII_MASTER(b5)=0 (slave), AUTODET(b4)=0. */
     phy_aer_iblk_read(sd, 0x50008300, &v);
     v = (v & ~((1u<<0)|(1u<<4)|(1u<<5))) | (1u<<6);
     phy_aer_iblk_write(sd, 0x50008300, v);
-    /* 4. CONTROL1000X2: ENABLE_PARALLEL_DETECTION(b0)=1, FILTER_FORCE_LINK(b2)=1
-     *    (force link valid after sync in forced mode — lets RX data pass),
-     *    FORCE_XMIT_DATA_ON_TXSIDE(b5)=0. */
+    /* 5. CONTROL1000X2: PARALLEL_DETECT(b0)=1; FILTER_FORCE_LINK(b2)=0 (NOT forced —
+     *    AN provides link), FORCE_XMIT_DATA(b5)=0. */
     phy_aer_iblk_read(sd, 0x50008301, &v);
-    v = (v & ~(1u<<5)) | (1u<<0) | (1u<<2);
+    v = (v & ~((1u<<2)|(1u<<5))) | (1u<<0);
     phy_aer_iblk_write(sd, 0x50008301, v);
+}
+
+/*
+ * 54282 SYSTEM-side (QSGMII toward the chip) bring-up + diagnostic.
+ *
+ * SGMII_SLAVE register (RDB 0x235, brcm-shadow 0x151c — same access path as the
+ * EXP_PKT_COUNTER above). The full SDK's copper-mode 54282 path sets
+ * SGMII_SLAVE_AUTO_DETECT=1 (auto-detect between SGMII-slave and 1000BASE-X on the
+ * system side); OpenMDK's bcm54282 driver sets this bit ONLY in its fiber autoneg
+ * path, never in copper init — so for our copper port the PHY's QSGMII system side
+ * is left without it. This is the half of the "holistic port" I had not done (the
+ * serdes side is qsgmii_serdes_passthru_setup; this is the matching PHY side).
+ *
+ * The register also exposes the 54282's OWN view of its link to the chip:
+ *   bit 9  SERDES_LINK     (system-side link to the 56340 QSGMII serdes)
+ *   bit 8  SERDES_DUPLEX
+ *   bits 6-7 SERDES_SPEED  (1G = 2)
+ *   bit 1  SGMII_SLAVE_MODE
+ *   bit 0  SGMII_SLAVE_AUTO_DETECT
+ * Reading SERDES_LINK tells us if the PHY system side believes the chip link is up,
+ * independent of the chip serdes' own status — a diagnostic never inspected before.
+ */
+#define EDGED_SGMII_SLAVEr 0x1000151c   /* 0x151c | PHY_REG_ACC_BRCM_SHADOW(0x10000000) */
+
+static void
+qsgmii_54282_sysside_setup(int unit, int port)
+{
+    phy_ctrl_t *pc;
+    static int logged_state = -1;
+
+    for (pc = BMD_PORT_PHY_CTRL(unit, port); pc != NULL; pc = pc->next) {
+        uint32_t v = 0;
+        if (!pc->drv || !pc->drv->drv_name ||
+            strcmp(pc->drv->drv_name, "bcm54282")) continue;
+
+        phy_brcm_shadow_read(pc, EDGED_SGMII_SLAVEr, &v);
+        if ((int)v != logged_state) {
+            LOG("--rx-dump: 54282 SGMII_SLAVE=%04x [sys_link(b9)=%d dup(b8)=%d "
+                "spd(b6:7)=%d auto_det(b0)=%d slave_mode(b1)=%d]",
+                v & 0xffff, !!(v & (1u<<9)), !!(v & (1u<<8)),
+                (v >> 6) & 0x3, !!(v & 1u), !!(v & (1u<<1)));
+            logged_state = (int)v;
+        }
+        /* Set SGMII_SLAVE_AUTO_DETECT (bit 0) — the copper-mode system-side config
+         * OpenMDK omits. Read-modify-write; preserve everything else. */
+        if (!(v & 1u)) {
+            phy_brcm_shadow_write(pc, EDGED_SGMII_SLAVEr, v | 1u);
+            LOG("--rx-dump: 54282 set SGMII_SLAVE_AUTO_DETECT (was %04x)", v & 0xffff);
+        }
+        break;
+    }
+}
+
+/*
+ * Apply the 54282 SERDES-control RDB registers that ICOS sets and edged doesn't
+ * (found by full ICOS-vs-EdgeNOS RDB diff, 2026-06-07). These are 54282 system-side
+ * serdes-area registers that may gate copper->QSGMII forwarding:
+ *   RDB 0x236 bit0 = SERDES_AUTONEG_PARALLEL_DETECT_EN (ICOS 0x582f vs edged 0x582e)
+ *   RDB 0x238 bit2                                     (ICOS 0x6004 vs edged 0x6000)
+ *   RDB 0x030  = 0x0018                                (ICOS 0x0018 vs edged 0x0000)
+ * Access via the SDK RDB protocol on the bound 54282 pc: enable RDB (reg 0x17=0x0F7E,
+ * 0x15=0x0000), write reg 0x1e=addr + 0x1f=data, then restore legacy access mode.
+ */
+static void
+qsgmii_54282_rdb_fix(int unit, int port)
+{
+    phy_ctrl_t *pc;
+    for (pc = BMD_PORT_PHY_CTRL(unit, port); pc != NULL; pc = pc->next) {
+        uint32_t v;
+        if (!pc->drv || !pc->drv->drv_name || strcmp(pc->drv->drv_name, "bcm54282")) continue;
+        /* enable RDB addressing mode */
+        phy_reg_write(pc, 0x17, 0x0F7E);
+        phy_reg_write(pc, 0x15, 0x0000);
+        /* 0x236 |= bit0 (parallel detect) */
+        phy_reg_write(pc, 0x1e, 0x236); v = 0; phy_reg_read(pc, 0x1f, &v);
+        phy_reg_write(pc, 0x1e, 0x236); phy_reg_write(pc, 0x1f, (v | 0x0001) & 0xffff);
+        /* 0x238 |= bit2 */
+        phy_reg_write(pc, 0x1e, 0x238); v = 0; phy_reg_read(pc, 0x1f, &v);
+        phy_reg_write(pc, 0x1e, 0x238); phy_reg_write(pc, 0x1f, (v | 0x0004) & 0xffff);
+        /* 0x030 = 0x0018 */
+        phy_reg_write(pc, 0x1e, 0x030); phy_reg_write(pc, 0x1f, 0x0018);
+        /* read back for the log */
+        { uint32_t a=0,b=0,c=0;
+          phy_reg_write(pc, 0x1e, 0x236); phy_reg_read(pc, 0x1f, &a);
+          phy_reg_write(pc, 0x1e, 0x238); phy_reg_read(pc, 0x1f, &b);
+          phy_reg_write(pc, 0x1e, 0x030); phy_reg_read(pc, 0x1f, &c);
+          LOG("--sgmii-an: 54282 RDB fix applied: 0x236=%04x 0x238=%04x 0x030=%04x", a&0xffff, b&0xffff, c&0xffff); }
+        /* restore legacy access */
+        phy_reg_write(pc, 0x1e, 0x0087);
+        phy_reg_write(pc, 0x1f, 0x8000);
+        break;
+    }
 }
 
 static int
@@ -1407,6 +1516,12 @@ main(int argc, char *argv[])
             scan = 7;   /* read ge0 (jack 1) key MII regs to debug copper link */
         } else if (!strcmp(argv[i], "--lb-test")) {
             scan = 8;   /* serdes-loopback RX test: TX->loop->MAC RX->CPU (no network) */
+        } else if (!strcmp(argv[i], "--copper-regs")) {
+            scan = 9;   /* full reg snapshot for ge25/port26 (ICOS-diff baseline) */
+        } else if (!strcmp(argv[i], "--sgmii-an")) {
+            scan = 10;  /* one-shot SGMII-autoneg test: apply once, settle, check AN done */
+        } else if (!strcmp(argv[i], "--copper-rdb")) {
+            scan = 11;  /* full 54282 RDB register dump for ge25 (ICOS-diff) */
         } else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
             usage(argv[0]); return 0;
         } else {
@@ -2107,6 +2222,10 @@ main(int argc, char *argv[])
                      * path, which should let RX data pass (vs bare passthru that linked
                      * but dropped RX). bmd_port_mode_update reverts it, so re-apply. */
                     qsgmii_serdes_passthru_setup(unit, live_port);
+                    /* The matching PHY system-side half: SGMII_SLAVE_AUTO_DETECT (the
+                     * copper config OpenMDK omits) + read the 54282's own SERDES_LINK
+                     * status toward the chip. Both ends of the QSGMII now configured. */
+                    qsgmii_54282_sysside_setup(unit, live_port);
                     for (pc = BMD_PORT_PHY_CTRL(unit, live_port); pc != NULL; pc = pc->next)
                         if (pc->drv && pc->drv->drv_name &&
                             !strcmp(pc->drv->drv_name, "bcmi_qsgmii_serdes")) {
@@ -2343,21 +2462,36 @@ main(int argc, char *argv[])
 
         drc = bmd_xgsm_dma_init(unit);
         LOG("--lb-test: dma_init rc=%d; port %d", drc, lp);
-        /* LINE-side loopback via BMD's F_PHY_LOOPBACK: bmd puts the external 54282
-         * into loopback and configures the MAC/port for it. A CPU-injected frame
-         * egresses MAC->QSGMII->54282, loops there, and returns ->QSGMII->MAC RX
-         * -> L2 flood (VLAN1, CPU member) -> CMICm RX DMA. Egress stays intact (the
-         * loopback is at the line PHY, not the serdes which broke egress). */
-        drc = bmd_port_mode_set(unit, lp, bmdPortMode1000fd, BMD_PORT_MODE_F_PHY_LOOPBACK);
-        LOG("--lb-test: port_mode_set 1000fd + PHY_LOOPBACK rc=%d (%s)",
-            drc, drc==0?"OK":CDK_ERRMSG(drc));
+        /* Decisive isolation: separate the QSGMII/PHY-system path from the copper
+         * wire. Bring up VLAN/STP/MAC + the QSGMII serdes (forced) + 54282 sysside,
+         * THEN enable the 54282's OWN near-end loopback (MII_CTRL.LOOPBACK b14, via
+         * PHY_LOOPBACK_SET on the bcm54282 pc). A CPU-injected frame goes
+         * chip->QSGMII->54282 system, loops inside the PHY's digital block, and
+         * returns ->QSGMII->chip MAC RX -> L2 flood (VLAN1, CPU) -> CMICm RX DMA.
+         *   returns  => QSGMII bidirectional + PHY system-side forward WORK; the
+         *               break is the copper line / wire / partner.
+         *   no return => QSGMII RX->chip is broken (matches 54282 SERDES_LINK=0);
+         *               confirms the system-side QSGMII is the wall, not the wire. */
         bmd_vlan_port_add(unit, 1, lp, BMD_VLAN_PORT_F_UNTAGGED);
         bmd_port_vlan_set(unit, lp, 1);
         bmd_port_stp_set(unit, lp, bmdSpanningTreeForwarding);
         bmd_port_mode_update(unit, lp);
         l3_mac_rx_enable(unit, lp);
+        qsgmii_serdes_passthru_setup(unit, lp);   /* chip serdes link=1 (forced) */
+        qsgmii_54282_sysside_setup(unit, lp);     /* 54282 SGMII_SLAVE_AUTO_DETECT */
+        qsgmii_54282_rdb_fix(unit, lp);           /* ICOS-matching serdes RDB regs */
+        /* Enable the 54282 near-end loopback on the bound copper PHY. */
+        for (pc = BMD_PORT_PHY_CTRL(unit, lp); pc != NULL; pc = pc->next) {
+            if (pc->drv && pc->drv->drv_name &&
+                !strcmp(pc->drv->drv_name, "bcm54282")) { sd = pc; break; }
+        }
+        if (sd && sd->drv->pd_loopback_set) {
+            int lrc = PHY_LOOPBACK_SET(sd, 1);
+            LOG("--lb-test: 54282 PHY_LOOPBACK_SET(1) rc=%d (%s)", lrc, lrc==0?"OK":CDK_ERRMSG(lrc));
+        } else {
+            LOG("--lb-test: WARN no bcm54282 pd_loopback_set on port %d", lp);
+        }
         { struct timespec ts={.tv_sec=1,.tv_nsec=0}; nanosleep(&ts,NULL); }
-        (void)pc; (void)sd;
 
         if (rbuf && tbuf) {
             bmd_pkt_t rpkt;
@@ -2404,6 +2538,313 @@ main(int argc, char *argv[])
         LOG("--lb-test: done, %d looped frames received to CPU", got);
         if (tbuf) bmd_dma_free_coherent(unit,128,tbuf,tb);
         if (rbuf) bmd_dma_free_coherent(unit,2048,rbuf,rb);
+    }
+
+    /* --copper-regs: full register snapshot for the live copper port (ge25/CDK 26)
+     * to diff against the working ICOS image. Brings the port up (VLAN/STP/MAC +
+     * QSGMII serdes forced + 54282 auto_det), then dumps:
+     *   - 54282 standard MII regs 0x00-0x1f (line side)
+     *   - 54282 key brcm-shadow regs (SGMII_SLAVE, MODE_CONTROL, 1000X, misc)
+     *   - internal QSGMII serdes regs (MIICNTL/ANA/CONTROL1000X1/X2 + status)
+     * Capture the SAME set on a working ICOS ge25 and diff. */
+    if (scan == 9) {
+        int lp = 26;
+        phy_ctrl_t *pc, *cu = NULL, *sd = NULL;
+        int r;
+
+        bmd_vlan_port_add(unit, 1, lp, BMD_VLAN_PORT_F_UNTAGGED);
+        bmd_port_vlan_set(unit, lp, 1);
+        bmd_port_stp_set(unit, lp, bmdSpanningTreeForwarding);
+        bmd_port_mode_update(unit, lp);
+        l3_mac_rx_enable(unit, lp);
+        qsgmii_serdes_passthru_setup(unit, lp);
+        qsgmii_54282_sysside_setup(unit, lp);
+        { struct timespec ts={.tv_sec=1,.tv_nsec=0}; nanosleep(&ts,NULL); }
+
+        for (pc = BMD_PORT_PHY_CTRL(unit, lp); pc != NULL; pc = pc->next) {
+            if (!pc->drv || !pc->drv->drv_name) continue;
+            if (!strcmp(pc->drv->drv_name, "bcm54282")) cu = pc;
+            else if (!strcmp(pc->drv->drv_name, "bcmi_qsgmii_serdes")) sd = pc;
+        }
+
+        LOG("--copper-regs: snapshot for ge25/CDK %d (diff target = working ICOS)", lp);
+        if (cu) {
+            uint32_t v; int reg;
+            char line[120]; int o;
+            LOG("  [54282 std MII 0x00-0x1f]");
+            for (reg = 0; reg < 0x20; reg += 8) {
+                int j; o = 0;
+                for (j = 0; j < 8; j++) {
+                    v = 0; phy_reg_read(cu, reg + j, &v);
+                    o += sprintf(line + o, "0x%02x:%04x ", reg + j, v & 0xffff);
+                }
+                LOG("    %s", line);
+            }
+            /* Key brcm-shadow regs (addr | PHY_REG_ACC_BRCM_SHADOW 0x10000000). */
+            LOG("  [54282 brcm-shadow]");
+            { struct { const char *n; uint32_t a; } sh[] = {
+                {"SGMII_SLAVE   (0x235)", 0x1000151c},
+                {"MODE_CONTROL  (0x21) ", 0x10000021},
+                {"AUTO_DET_MED  (0x23e)", 0x1000151e},
+                {"MISC_1000X    (0x16) ", 0x10001016},
+                {"EXT_SERDES_CTL(0x234)", 0x1000151b},
+                {"EXP_PKT_COUNTER      ", 0x100f0015},
+              };
+              unsigned z;
+              for (z = 0; z < sizeof(sh)/sizeof(sh[0]); z++) {
+                  v = 0; r = phy_brcm_shadow_read(cu, sh[z].a, &v);
+                  LOG("    %s = %04x (rc=%d)", sh[z].n, v & 0xffff, r);
+              }
+            }
+        } else LOG("  (no bcm54282 pc bound on port %d!)", lp);
+
+        if (sd) {
+            uint32_t v; unsigned z;
+            struct { const char *n; uint32_t a; } sr[] = {
+                {"MIICNTL       (0x0)   ", 0x50000000},
+                {"MII_ANA       (0x4)   ", 0x50000004},
+                {"MII_STATUS    (0x1)   ", 0x50000001},
+                {"CONTROL1000X1 (0x8300)", 0x50008300},
+                {"CONTROL1000X2 (0x8301)", 0x50008301},
+                {"CONTROL1000X3 (0x8302)", 0x50008302},
+                {"XGXSBLK0_CTRL (0x8000)", 0x50008000},
+                {"LANE_CTRL0    (0x8015)", 0x50008015},
+            };
+            LOG("  [internal QSGMII serdes (AER, port %d's lane)]", lp);
+            for (z = 0; z < sizeof(sr)/sizeof(sr[0]); z++) {
+                v = 0; r = phy_aer_iblk_read(sd, sr[z].a, &v);
+                LOG("    %s = %04x (rc=%d)", sr[z].n, v & 0xffff, r);
+            }
+        } else LOG("  (no bcmi_qsgmii_serdes pc bound on port %d!)", lp);
+        LOG("--copper-regs: done");
+    }
+
+    /* --sgmii-an: clean ONE-SHOT SGMII-autoneg test. The rx-dump harness restarts AN
+     * every round (RAN) + reverts via bmd_port_mode_update, so AN never settles. Here:
+     * set up the port + serdes SGMII-AN config ONCE, then leave it alone, let AN settle,
+     * and read whether it actually completed (serdes MII_STATUS AN-complete + link).
+     * Then passively poll RX without touching the serdes again. */
+    if (scan == 10) {
+        int lp = 26;
+        dma_addr_t rbaddr = 0;
+        uint8_t *rbuf;
+        phy_ctrl_t *pc, *sd = NULL;
+        uint32_t st=0, ctl=0, x1=0, x2=0, ssl=0;
+        int got = 0, k, drc, rounds;
+
+        drc = bmd_xgsm_dma_init(unit);
+        LOG("--sgmii-an: dma_init rc=%d", drc);
+        rbuf = bmd_dma_alloc_coherent(unit, 2048, &rbaddr);
+
+        bmd_vlan_port_add(unit, 1, lp, BMD_VLAN_PORT_F_UNTAGGED);
+        bmd_port_vlan_set(unit, lp, 1);
+        bmd_port_stp_set(unit, lp, bmdSpanningTreeForwarding);
+        bmd_port_mode_update(unit, lp);          /* ONCE — brings up MAC for the link */
+        l3_mac_rx_enable(unit, lp);
+        qsgmii_serdes_passthru_setup(unit, lp);  /* SGMII-AN config, ONCE */
+        qsgmii_54282_sysside_setup(unit, lp);
+        LOG("--sgmii-an: applied SGMII-AN config once; letting AN settle 5s (NO re-touch)");
+        { struct timespec ts={.tv_sec=5,.tv_nsec=0}; nanosleep(&ts,NULL); }
+
+        for (pc = BMD_PORT_PHY_CTRL(unit, lp); pc != NULL; pc = pc->next)
+            if (pc->drv && pc->drv->drv_name &&
+                !strcmp(pc->drv->drv_name, "bcmi_qsgmii_serdes")) { sd = pc; break; }
+        if (sd) {
+            phy_aer_iblk_read(sd, 0x50000001, &st);   /* MII_STATUS: b5 AN-done, b2 link */
+            phy_aer_iblk_read(sd, 0x50000000, &ctl);
+            phy_aer_iblk_read(sd, 0x50008300, &x1);
+            phy_aer_iblk_read(sd, 0x50008301, &x2);
+            LOG("--sgmii-an: serdes MII_STATUS=%04x [AN_done(b5)=%d link(b2)=%d] MII_CTRL=%04x "
+                "CTRL1000X1=%04x CTRL1000X2=%04x", st, !!(st&(1u<<5)), !!(st&(1u<<2)), ctl, x1, x2);
+        }
+        for (pc = BMD_PORT_PHY_CTRL(unit, lp); pc != NULL; pc = pc->next)
+            if (pc->drv && pc->drv->drv_name && !strcmp(pc->drv->drv_name, "bcm54282")) {
+                uint32_t bmsr=0, mctrl=0;
+                phy_brcm_shadow_read(pc, EDGED_SGMII_SLAVEr, &ssl);
+                phy_reg_read(pc, 0x01, &bmsr); phy_reg_read(pc, 0x01, &bmsr);  /* copper BMSR, latched */
+                phy_brcm_shadow_read(pc, 0x10001f1c, &mctrl);  /* MODE_CTRL RDB0x21 */
+                LOG("--sgmii-an: 54282 copper BMSR=%04x [link(b2)=%d AN_done(b5)=%d] "
+                    "SGMII_SLAVE=%04x[sys_link=%d] MODE_CTRL=%04x[cu_link(b7)=%d sd_link(b6)=%d sel(b1:2)=%d]",
+                    bmsr, !!(bmsr&(1u<<2)), !!(bmsr&(1u<<5)),
+                    ssl, !!(ssl&(1u<<9)), mctrl, !!(mctrl&(1u<<7)), !!(mctrl&(1u<<6)), (mctrl>>1)&0x3);
+                break;
+            }
+        /* Poll serdes link over 10s to see if it ever resolves up. Also read XGXSSTATUS
+         * (0x8001) — the serdes datapath health (TXPLL lock, init sequencer done/pass,
+         * RX framer error, remote fault). This is the decisive read: if MII link=1 but
+         * the serdes datapath isn't healthy, the RX isn't truly synced to data. */
+        if (sd) {
+            int q; uint32_t s2, xs;
+            for (q=0; q<5; q++) {
+                { struct timespec ts={.tv_sec=2,.tv_nsec=0}; nanosleep(&ts,NULL); }
+                phy_aer_iblk_read(sd, 0x50000001, &s2); phy_aer_iblk_read(sd, 0x50000001, &s2);
+                phy_aer_iblk_read(sd, 0x50008001, &xs);
+                LOG("--sgmii-an: +%ds serdes MII_STATUS=%04x [AN_done=%d link=%d] "
+                    "XGXSSTATUS=%04x [txpll_lock=%d seq_done=%d seq_pass=%d rxferr=%d rmt_fault=%d]",
+                    (q+1)*2, s2, !!(s2&(1u<<5)), !!(s2&(1u<<2)),
+                    xs, !!(xs&(1u<<11)), !!(xs&(1u<<9)), !!(xs&(1u<<8)), !!(xs&(1u<<4)), !!(xs&(1u<<12)));
+            }
+        }
+
+        /* Run bmd's FULL chip-side port bring-up now that the serdes link is UP — it
+         * configures the chip RX path / EPC / MAC for the *resolved* link (the first
+         * port_mode_update ran while link was down, so that setup never happened). It
+         * reverts the serdes to fiber, so re-apply SGMII-AN and let it re-settle. */
+        LOG("--sgmii-an: full bmd_port_mode_update (link up) + re-apply serdes, re-settle 8s");
+        bmd_port_mode_update(unit, lp);
+        qsgmii_serdes_passthru_setup(unit, lp);
+        qsgmii_54282_sysside_setup(unit, lp);
+        qsgmii_54282_rdb_fix(unit, lp);           /* re-apply ICOS serdes RDB regs */
+        { struct timespec ts={.tv_sec=8,.tv_nsec=0}; nanosleep(&ts,NULL); }
+        /* l3_mac_rx_enable now sets SW_LINK_STATUS=1 — the ICOS-verified RX gate. */
+        { uint32_t xc = l3_mac_rx_enable(unit, lp);
+          LOG("--sgmii-an: post-link MAC enable XMAC_CTRL=%08x (SW_LINK_STATUS set)", xc); }
+
+        /* DECISIVE self-test: chip serdes internal loopback. The serdes is healthy
+         * (XGXSSTATUS PLL+seq OK), so inject a frame — if it loops serdes->deframer->
+         * XMAC and rx_pkts increments, the chip RX path works end-to-end and the live
+         * RX=0 is purely data-not-arriving-from-54282. If it does NOT loop, the chip
+         * QSGMII deframer/RX path itself is the gap. */
+        if (sd && sd->drv->pd_loopback_set && rbuf) {
+            dma_addr_t lbaddr=0; uint8_t *lb = bmd_dma_alloc_coherent(unit, 128, &lbaddr);
+            bmd_pkt_t rpkt, *rp=NULL; uint32_t rxp0=0, rxp1=0; int k, lrc;
+            bmd_stat_get(unit, lp, bmdStatRxPackets, &rxp0);
+            lrc = PHY_LOOPBACK_SET(sd, 1);
+            { struct timespec ts={.tv_sec=1,.tv_nsec=0}; nanosleep(&ts,NULL); }
+            memset(&rpkt,0,sizeof(rpkt)); rpkt.data=rbuf; rpkt.size=2048; rpkt.baddr=rbaddr;
+            bmd_rx_start(unit,&rpkt);
+            if (lb) {
+                bmd_pkt_t tp; int b;
+                memset(lb,0,64); for(b=0;b<6;b++) lb[b]=0xff;
+                lb[6]=0x02;lb[7]=0xed;lb[12]=0x12;lb[13]=0x34; for(b=14;b<64;b++) lb[b]=b;
+                for (k=0;k<20;k++){ memset(&tp,0,sizeof(tp)); tp.port=lp; tp.data=lb; tp.size=64; tp.baddr=lbaddr;
+                    bmd_tx(unit,&tp);
+                    { struct timespec ts={.tv_sec=0,.tv_nsec=50*1000*1000}; nanosleep(&ts,NULL); }
+                    if (bmd_rx_poll(unit,&rp)==0 && rp) break; }
+            }
+            bmd_stat_get(unit, lp, bmdStatRxPackets, &rxp1);
+            LOG("--sgmii-an: SERDES-LOOPBACK self-test: lb_set rc=%d, rx_pkts %u->%u, looped_frame=%s "
+                "==> chip RX path %s", lrc, rxp0, rxp1, rp?"YES":"no",
+                (rxp1>rxp0||rp)?"WORKS (live RX=0 is 54282/wire data not arriving)":"BROKEN (deframer/RX path gap)");
+            PHY_LOOPBACK_SET(sd, 0);
+            bmd_rx_stop(unit);
+            if (lb) bmd_dma_free_coherent(unit,128,lb,lbaddr);
+            qsgmii_serdes_passthru_setup(unit, lp);  /* restore after loopback */
+            { struct timespec ts={.tv_sec=6,.tv_nsec=0}; nanosleep(&ts,NULL); }
+            l3_mac_rx_enable(unit, lp);
+        }
+
+        /* RX poll — DO NOT touch serdes or call port_mode_update again. Resident ~120s
+         * so a user can generate ingress traffic on the port. Periodically TX a
+         * broadcast ARP to elicit replies, keep the QSGMII link warm, and confirm the
+         * TX path + 54282 counter increments. */
+        dma_addr_t tbaddr2 = 0;
+        uint8_t *tbuf2 = bmd_dma_alloc_coherent(unit, 128, &tbaddr2);
+        if (rbuf) {
+            bmd_pkt_t rpkt, *rp = NULL;
+            int armed;
+            volatile uint32_t *cmc = _mmap(0x48031000, 0x1000);
+            memset(&rpkt,0,sizeof(rpkt)); rpkt.data=rbuf; rpkt.size=2048; rpkt.baddr=rbaddr;
+            armed = (bmd_rx_start(unit,&rpkt) >= 0);
+            LOG("--sgmii-an: RX armed=%d; resident listen ~120s — GENERATE TRAFFIC on "
+                "the port-1 net now (ping 10.14.1.x / any broadcast)", armed);
+            for (rounds=0; rounds<120 && armed; rounds++) {
+                /* every 20 rounds (~2s each), TX a broadcast ARP probe out the port */
+                if (tbuf2 && (rounds % 20) == 5) {
+                    bmd_pkt_t tp; int b;
+                    static const uint8_t sa[6]={0x02,0xed,0x60,0x00,0x00,0x01};
+                    memset(tbuf2,0,64);
+                    for (b=0;b<6;b++) tbuf2[b]=0xff;
+                    memcpy(tbuf2+6,sa,6); tbuf2[12]=0x08; tbuf2[13]=0x06;
+                    tbuf2[14]=0;tbuf2[15]=1;tbuf2[16]=8;tbuf2[17]=0;tbuf2[18]=6;tbuf2[19]=4;tbuf2[21]=1;
+                    memcpy(tbuf2+22,sa,6);
+                    tbuf2[28]=10;tbuf2[29]=14;tbuf2[30]=1;tbuf2[31]=253;
+                    tbuf2[38]=10;tbuf2[39]=14;tbuf2[40]=1;tbuf2[41]=254;
+                    memset(&tp,0,sizeof(tp)); tp.port=lp; tp.data=tbuf2; tp.size=64; tp.baddr=tbaddr2;
+                    bmd_tx(unit,&tp);
+                }
+                for (k=0;k<100;k++){ int r=bmd_rx_poll(unit,&rp); if(r==0&&rp)break;
+                    { struct timespec ts={.tv_sec=0,.tv_nsec=10*1000*1000}; nanosleep(&ts,NULL);} }
+                if (rp) { uint8_t *d=rp->data; got++;
+                    LOG("  *** RX #%d %d bytes port %d etype %02x%02x <== RX WORKS", got, rp->size, rp->port, d[12],d[13]);
+                    memset(&rpkt,0,sizeof(rpkt)); rpkt.data=rbuf; rpkt.size=2048; rpkt.baddr=rbaddr;
+                    if (bmd_rx_start(unit,&rpkt)<0) armed=0; rp=NULL;
+                }
+                if ((rounds%10)==9) {
+                    uint32_t rxp=0,txp=0,cnt=0;
+                    phy_ctrl_t *cpc;
+                    bmd_stat_get(unit,lp,bmdStatRxPackets,&rxp);
+                    bmd_stat_get(unit,lp,bmdStatTxPackets,&txp);
+                    /* 54282 copper-side pkt counter: nonzero with no TX => the wire IS
+                     * delivering frames to the PHY (so any rx_pkts=0 is the 54282->chip
+                     * gap, not a quiet wire). */
+                    for (cpc = BMD_PORT_PHY_CTRL(unit, lp); cpc; cpc = cpc->next)
+                        if (cpc->drv && cpc->drv->drv_name &&
+                            !strcmp(cpc->drv->drv_name, "bcm54282")) {
+                            phy_brcm_shadow_read(cpc, 0x100f0015, &cnt); break; }
+                    LOG("--sgmii-an: r%d got=%d rx_pkts=%u tx_pkts=%u 54282_pktcnt=%u DMA_STAT=%08x",
+                        rounds, got, rxp, txp, cnt & 0xffff, cmc?cmc[0x150/4]:0);
+                }
+            }
+            bmd_rx_stop(unit);
+            bmd_dma_free_coherent(unit,2048,rbuf,rbaddr);
+        }
+        if (tbuf2) bmd_dma_free_coherent(unit,128,tbuf2,tbaddr2);
+        LOG("--sgmii-an: done, %d frames", got);
+    }
+
+    /* --copper-rdb: full 54282 RDB register dump for ge25, via the SAME RDB method used
+     * to read ICOS (write reg 0x1E=addr, read reg 0x1F), so the two dumps diff cleanly.
+     * OpenMDK uses legacy (0x1c shadow) access, so RDB mode is off here — enable it
+     * (reg 0x17=0x0F7E, reg 0x15=0x0000), dump, then restore legacy. */
+    if (scan == 11) {
+        int lp = 26;
+        phy_ctrl_t *pc, *cu = NULL;
+        int reg;
+
+        bmd_vlan_port_add(unit, 1, lp, BMD_VLAN_PORT_F_UNTAGGED);
+        bmd_port_vlan_set(unit, lp, 1);
+        bmd_port_stp_set(unit, lp, bmdSpanningTreeForwarding);
+        bmd_port_mode_update(unit, lp);
+        l3_mac_rx_enable(unit, lp);
+        qsgmii_serdes_passthru_setup(unit, lp);
+        { struct timespec ts={.tv_sec=2,.tv_nsec=0}; nanosleep(&ts,NULL); }
+
+        for (pc = BMD_PORT_PHY_CTRL(unit, lp); pc != NULL; pc = pc->next)
+            if (pc->drv && pc->drv->drv_name && !strcmp(pc->drv->drv_name, "bcm54282")) { cu = pc; break; }
+        if (!cu) { LOG("--copper-rdb: no bcm54282 pc on port %d", lp); }
+        else {
+            uint32_t v;
+            LOG("--copper-rdb: 54282 ge25 RDB dump (enable RDB mode)");
+            /* std MII 0x00-0x1f (legacy) first */
+            for (reg = 0; reg < 0x20; reg += 8) {
+                char line[120]; int o=0, j;
+                for (j=0;j<8;j++){ v=0; phy_reg_read(cu, reg+j, &v); o+=sprintf(line+o,"%02x:%04x ",reg+j,v&0xffff); }
+                LOG("  MII %s", line);
+            }
+            /* enable RDB addressing mode */
+            phy_reg_write(cu, 0x17, 0x0F7E);
+            phy_reg_write(cu, 0x15, 0x0000);
+            /* dump RDB ranges relevant to copper->SGMII forwarding */
+            {
+                int ranges[][2] = { {0x000,0x040}, {0x200,0x240}, {0x300,0x310}, {-1,-1} };
+                int ri;
+                for (ri = 0; ranges[ri][0] >= 0; ri++) {
+                    for (reg = ranges[ri][0]; reg <= ranges[ri][1]; reg += 8) {
+                        char line[160]; int o=0, j;
+                        for (j=0;j<8 && (reg+j)<=ranges[ri][1];j++){
+                            v=0; phy_reg_write(cu,0x1e,reg+j); phy_reg_read(cu,0x1f,&v);
+                            o+=sprintf(line+o,"%03x:%04x ",reg+j,v&0xffff);
+                        }
+                        LOG("  RDB %s", line);
+                    }
+                }
+            }
+            /* restore legacy access mode */
+            phy_reg_write(cu, 0x1e, 0x0087);
+            phy_reg_write(cu, 0x1f, 0x8000);
+            LOG("--copper-rdb: done (legacy mode restored)");
+        }
     }
 
     if (keep) {

@@ -48,6 +48,16 @@ void l3_show(int unit);
 /* Force XMAC RX_EN+TX_EN (and clear SOFT_RESET) on a port. Returns XMAC_CTRL after. */
 uint32_t l3_mac_rx_enable(int unit, int port);
 
+/* Dump the XMAC RX link-status-signaling state (LSS fault status + disable bits). */
+void l3_mac_rx_diag(int unit, int port);
+
+/* Disable the XMAC RX LSS faults (local/remote/link-interruption). Returns LSS_CTRL. */
+uint32_t l3_mac_lss_disable(int unit, int port);
+
+/* Set PORT_MODE_REG.XPCn_GMII_MII_ENABLE=1 (1G GMII framing — bmd wrongly leaves 0).
+ * Returns PORT_MODE_REG after. */
+uint32_t l3_mac_gmii_enable(int unit, int port);
+
 /*
  * Load and program an L3 config file. Format (whitespace-separated, # comments):
  *   intf  <vlan> <port> <router-mac>           e.g.  intf 11 53 00:11:22:33:44:55
