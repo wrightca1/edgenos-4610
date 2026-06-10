@@ -34,22 +34,9 @@ echo "[diag] launching bcm.user with command script"
 init all
 init bcm
 linkscan on
-sleep 10
-echo ===PS_AFTER_LINEUP===
-ps xe0
-echo ===BOUNCE===
-linkscan off
-port xe0 en=0
-sleep 2
-port xe0 en=1
-linkscan on
-sleep 10
-echo ===PS_AFTER_BOUNCE===
-ps xe0
-clear c
 sleep 6
-echo ===SHOWC_AFTER_BOUNCE===
-show c
+echo ===PORTS===
+ps ge
 quit
 CMDS
 echo "[diag] done"

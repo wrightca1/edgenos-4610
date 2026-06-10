@@ -9,6 +9,24 @@ interactive REPL (`diag_shell();`) diverted to `bcmd_run();`. This reuses
 `make bcm` recipe — only the REPL is replaced with a deterministic datapath
 bring-up.
 
+## Current target: copper port 1 (WORKING — first bidirectional ping)
+
+`BCMD_PORT=26` (ge25 = front-panel port 1, BCM54282) on **10.14.1.0/24**:
+**`ping 10.14.1.254` = 0% loss**, ARP resolves, ICMP replies return. The last-mile
+fix was the **CPU-punt VLAN-tag strip** — `bcmd_knet_setup` now sets
+`filter.flags = BCM_KNET_FILTER_F_STRIP_TAG` so the chip's PVID (VLAN 1) tag is
+removed and Linux sees clean untagged frames (without it the kernel saw a bogus
+ethertype and never parsed IP/ARP). `BCMD_PORT` is **compile-time** — rebuild to
+retarget between the copper port (26) and the SFP+ uplink (xe0 = 50).
+
+> **Loop warning:** front port 1 (ge25) must be on the **10.14.1.0/24 VLAN, not the
+> 10.1.1 mgmt LAN** — ge25 + mgmt `ma1` on the same 10.1.1 segment is the L2 loop
+> that hung the box. Verify with `tcpdump -i port1 -nn` (source IPs must be 10.14.1.x).
+
+The **SFP+ uplink (port 49 / xe0 / 50)** is parked pending replacement optics; its
+blocker is an optical-overdrive issue on the link, proven *not* software via an
+ICOS A/B test (see below).
+
 ## Why the full SDK
 
 OpenMDK proved the hardware works (copper links, MACs forward), but its

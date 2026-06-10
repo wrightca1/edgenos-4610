@@ -53,10 +53,11 @@
 /* ------------------------------------------------------------------ config */
 
 #define BCMD_UNIT       0
-#define BCMD_PORT       50          /* xe0 = front-panel port-49 = SFP+ uplink to router
-                                       (84758 SFP+ ports = chip 50-53 / xe0-3) */
-#define BCMD_VLAN       1           /* default VLAN; discover router's VLAN from RX */
-#define BCMD_IFNAME     "uplink"
+#define BCMD_PORT       26          /* ge25 = front-panel port-1 (copper, BCM54282) on
+                                       the 10.14.1.0/24 network. SFP+ uplink (xe0=port50)
+                                       parked pending replacement optics — see README. */
+#define BCMD_VLAN       1           /* untagged access on 10.14.1.0/24 */
+#define BCMD_IFNAME     "port1"
 
 /* Host/router MAC surfaced on the netdev. Stable so the chip L2 entry and the
  * Linux netdev agree (the diag used this locally-administered address). */
@@ -189,12 +190,13 @@ static int bcmd_knet_setup(bcm_port_t port, int *netif_id)
     filter.priority  = 0;
     filter.dest_type = BCM_KNET_DEST_T_NETIF;
     filter.dest_id   = netif.id;
-    /* DO NOT strip the VLAN tag: ge25 is an 802.1Q trunk (native/untagged =
-     * 10.14.1; other VLANs incl VLAN1=10.1.1 are tagged). Stripping hid the
-     * VLAN structure (everything looked untagged) and broke per-VLAN routing.
-     * Native (untagged) frames reach knet25 as-is; tagged frames carry their
-     * 802.1Q tag for VLAN subinterfaces (knet25.<vid>) to handle. */
-    filter.flags     = 0;
+    /* Strip the VLAN tag: port 1 (ge25) is a plain UNTAGGED access port on
+     * 10.14.1.0/24. The chip tags ingress frames with the port PVID (VLAN 1)
+     * and the CPU punt carries that tag, so without stripping the netdev sees
+     * a bogus ethertype (the 8100 tag) and never parses IP/ARP. STRIP_TAG gives
+     * Linux clean untagged frames. (If this port is later used as an 802.1Q
+     * trunk, drop the flag and use knet25.<vid> subinterfaces instead.) */
+    filter.flags     = BCM_KNET_FILTER_F_STRIP_TAG;
     /* match_flags = 0 -> matches every packet */
     sal_strncpy(filter.desc, "catch-all", sizeof(filter.desc) - 1);
     BCMD_CHK(bcm_knet_filter_create(BCMD_UNIT, &filter));
