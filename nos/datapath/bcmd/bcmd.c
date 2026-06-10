@@ -35,8 +35,11 @@
 #include <unistd.h>
 #include <poll.h>
 #include <net/if.h>
+#include <arpa/inet.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <linux/if_addr.h>
+#include <linux/neighbour.h>
 
 /* The SDK builder's <linux/i2c-dev.h> is the newer split header that lacks the
  * SMBus structs/constants, so we talk to the CPLD with raw i2c byte read/write
@@ -58,8 +61,10 @@
 #include <bcm/rx.h>
 #include <bcm/knet.h>
 #include <bcm/l2.h>
+#include <bcm/l3.h>
 #include <bcm/vlan.h>
 #include <bcm/stat.h>
+#include <bcm/switch.h>
 
 /* ------------------------------------------------------------------ config */
 
@@ -540,6 +545,148 @@ static void bcmd_build_ifmap(void)
     printf("[bcmd] netlink: mapped %d netdevs -> chip ports\n", bcmd_nifmap);
 }
 
+/* --------------------------------------------- netlink L3 -> chip (FIB sync) */
+/*
+ * Mirror the Linux L3 state into the ASIC so the chip forwards routed traffic in
+ * hardware: RTM_NEWADDR -> L3 interface + MY_STATION (route the switch's MAC);
+ * RTM_NEWNEIGH -> L3 egress next-hop + /32 host; RTM_NEWROUTE -> L3 route (via
+ * the gateway's egress). Routes that OSPF/BGP install in the kernel FIB thus get
+ * programmed into the chip L3 tables.
+ */
+static bcm_if_t bcmd_l3intf[BCMD_MAXPORT];     /* per-port egress L3 intf id */
+static char     bcmd_l3intf_set[BCMD_MAXPORT]; /* 1 = bcmd_l3intf[port] valid (id 0 is legal) */
+static int      bcmd_mystation_done = 0;
+
+/* next-hop egress cache so a route can resolve its gateway -> egress object. */
+static struct { int port; bcm_ip_t ip; bcm_if_t egr; } bcmd_nh[512];
+static int bcmd_nnh = 0;
+
+/* Returns the cached egress id, or -1 if not found (egress id 0 is legal). */
+static bcm_if_t bcmd_nh_find(int port, bcm_ip_t ip)
+{
+    int i;
+    for (i = 0; i < bcmd_nnh; i++)
+        if (bcmd_nh[i].port == port && bcmd_nh[i].ip == ip) return bcmd_nh[i].egr;
+    return -1;
+}
+
+/* Ensure the router MAC (BCMD_HOST_MAC) is in the MY_STATION TCAM so the chip
+ * L3-routes (not just L2-switches) frames addressed to us. Added once. */
+static void bcmd_l3_mystation(void)
+{
+    bcm_l2_station_t st;
+    int sid = 0, i, rv;
+    if (bcmd_mystation_done) return;
+    /* Enable object-based L3 egress mode: bcm_l3_egress_create returns
+     * BCM_E_DISABLED (-12) unless this is set. Must precede the first egress
+     * object create. Idempotent; harmless if already on. */
+    rv = bcm_switch_control_set(BCMD_UNIT, bcmSwitchL3EgressMode, 1);
+    if (rv != BCM_E_NONE)
+        printf("[bcmd] L3: bcmSwitchL3EgressMode set rv=%d\n", rv);
+    bcm_l2_station_t_init(&st);
+    for (i = 0; i < 6; i++) { st.dst_mac[i] = BCMD_HOST_MAC[i]; st.dst_mac_mask[i] = 0xff; }
+    st.vlan = 0; st.vlan_mask = 0;            /* any VLAN */
+    st.flags = BCM_L2_STATION_IPV4;
+    if (bcm_l2_station_add(BCMD_UNIT, &sid, &st) == BCM_E_NONE) {
+        bcmd_mystation_done = 1;
+        printf("[bcmd] L3: MY_STATION added (router MAC -> route IPv4)\n");
+    }
+}
+
+/* Ensure a per-port egress L3 interface (source MAC = router MAC, VLAN). */
+static bcm_if_t bcmd_l3_intf_ensure(int port, bcm_vlan_t vlan)
+{
+    bcm_l3_intf_t intf;
+    int i;
+    if (port < 0 || port >= BCMD_MAXPORT) return -1;
+    if (bcmd_l3intf_set[port]) return bcmd_l3intf[port];
+    bcmd_l3_mystation();
+    bcm_l3_intf_t_init(&intf);
+    intf.l3a_vid = vlan;
+    for (i = 0; i < 6; i++) intf.l3a_mac_addr[i] = BCMD_HOST_MAC[i];
+    if (bcm_l3_intf_create(BCMD_UNIT, &intf) != BCM_E_NONE) return -1;
+    bcmd_l3intf[port] = intf.l3a_intf_id;
+    bcmd_l3intf_set[port] = 1;
+    printf("[bcmd] L3: intf id=%d on port %d (vlan %d)\n", intf.l3a_intf_id, port, vlan);
+    return intf.l3a_intf_id;
+}
+
+/* RTM_NEWADDR (switch's own IP): /32 L3 host entry that punts to the CPU.
+ * Required once MY_STATION is installed: MY_STATION makes the chip L3-route any
+ * frame addressed to the router MAC instead of CPU-punting it, so without a
+ * local-IP host entry the chip would L3-miss (and drop) our own inbound unicast
+ * (ICMP replies, OSPF/BGP to us). BCM_L3_L2TOCPU sends matches to the CPU. */
+static void bcmd_l3_local_ip(bcm_ip_t ip)
+{
+    bcm_l3_host_t host;
+    if (bcmd_nh_find(-1, ip) >= 0) return;     /* already added (port -1 = local) */
+    bcm_l3_host_t_init(&host);
+    host.l3a_ip_addr = ip;
+    host.l3a_flags   = BCM_L3_L2TOCPU;
+    host.l3a_intf    = 0;
+    if (bcm_l3_host_add(BCMD_UNIT, &host) != BCM_E_NONE) return;
+    if (bcmd_nnh < (int)(sizeof(bcmd_nh)/sizeof(bcmd_nh[0]))) {
+        bcmd_nh[bcmd_nnh].port = -1; bcmd_nh[bcmd_nnh].ip = ip;
+        bcmd_nh[bcmd_nnh].egr = 0; bcmd_nnh++;
+    }
+    printf("[bcmd] L3: local %u.%u.%u.%u -> CPU (HW punt)\n",
+           (ip>>24)&0xff,(ip>>16)&0xff,(ip>>8)&0xff,ip&0xff);
+}
+
+/* RTM_NEWNEIGH: directly-connected host -> L3 egress next-hop + /32 host route. */
+static void bcmd_l3_neigh_add(int port, bcm_ip_t ip, const unsigned char *mac)
+{
+    bcm_l3_egress_t egr;
+    bcm_l3_host_t host;
+    bcm_if_t intf, eid = 0;
+    int i, rv;
+    if (bcmd_nh_find(port, ip) >= 0) return;   /* already programmed (re-dump) */
+    intf = bcmd_l3_intf_ensure(port, BCMD_VLAN);
+    if (intf < 0) { printf("[bcmd] L3: neigh %u.%u.%u.%u port %d: intf_ensure failed\n",
+                        (ip>>24)&0xff,(ip>>16)&0xff,(ip>>8)&0xff,ip&0xff, port); return; }
+    bcm_l3_egress_t_init(&egr);
+    egr.intf = intf;
+    egr.vlan = BCMD_VLAN;
+    egr.port = port;
+    for (i = 0; i < 6; i++) egr.mac_addr[i] = mac[i];
+    rv = bcm_l3_egress_create(BCMD_UNIT, 0, &egr, &eid);
+    if (rv != BCM_E_NONE) {
+        printf("[bcmd] L3: neigh %u.%u.%u.%u port %d: egress_create rv=%d\n",
+               (ip>>24)&0xff,(ip>>16)&0xff,(ip>>8)&0xff,ip&0xff, port, rv);
+        return;
+    }
+    bcm_l3_host_t_init(&host);
+    host.l3a_ip_addr = ip;
+    host.l3a_intf = eid;
+    rv = bcm_l3_host_add(BCMD_UNIT, &host);
+    if (rv != BCM_E_NONE)
+        printf("[bcmd] L3: host_add %u.%u.%u.%u rv=%d (egr %d still cached)\n",
+               (ip>>24)&0xff,(ip>>16)&0xff,(ip>>8)&0xff,ip&0xff, rv, eid);
+    if (bcmd_nnh < (int)(sizeof(bcmd_nh)/sizeof(bcmd_nh[0]))) {
+        bcmd_nh[bcmd_nnh].port = port; bcmd_nh[bcmd_nnh].ip = ip;
+        bcmd_nh[bcmd_nnh].egr = eid; bcmd_nnh++;
+    }
+    printf("[bcmd] L3: host %u.%u.%u.%u -> egr %d port %d (HW)\n",
+           (ip>>24)&0xff,(ip>>16)&0xff,(ip>>8)&0xff,ip&0xff, eid, port);
+}
+
+/* RTM_NEWROUTE: prefix via gateway -> L3 route pointing at the gateway egress. */
+static void bcmd_l3_route_add(bcm_ip_t prefix, int len, bcm_ip_t gw, int oif_port)
+{
+    bcm_l3_route_t rt;
+    bcm_if_t eid;
+    if (gw == 0) return;                 /* connected route: handled by intf */
+    eid = bcmd_nh_find(oif_port, gw);
+    if (eid < 0) return;                 /* gateway not resolved yet (deferred) */
+    bcm_l3_route_t_init(&rt);
+    rt.l3a_subnet  = prefix;
+    rt.l3a_ip_mask = len ? (bcm_ip_t)(~0u << (32 - len)) : 0;
+    rt.l3a_intf    = eid;
+    if (bcm_l3_route_add(BCMD_UNIT, &rt) == BCM_E_NONE)
+        printf("[bcmd] L3: route %u.%u.%u.%u/%d -> egr %d (HW)\n",
+               (prefix>>24)&0xff,(prefix>>16)&0xff,(prefix>>8)&0xff,prefix&0xff, len, eid);
+}
+
 /* Set a netdev admin-UP via ioctl, so its admin state matches the chip-enabled
  * state at startup. Without this, the netdevs start admin-DOWN while the chip
  * ports are enabled; carrier-change RTM_NEWLINK events (IFF_UP clear) would then
@@ -569,36 +716,133 @@ static int bcmd_nl_open(void)
     if (fd < 0) { printf("[bcmd] netlink socket: %s\n", strerror(errno)); return -1; }
     memset(&sa, 0, sizeof(sa));
     sa.nl_family = AF_NETLINK;
-    sa.nl_groups = RTMGRP_LINK;          /* live link admin-state changes */
+    /* link admin + IPv4 addr/neigh/route — the full L3 FIB mirror. */
+    sa.nl_groups = RTMGRP_LINK | RTMGRP_IPV4_IFADDR | RTMGRP_NEIGH | RTMGRP_IPV4_ROUTE;
     if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
         printf("[bcmd] netlink bind: %s\n", strerror(errno)); close(fd); return -1;
     }
     return fd;
 }
 
-/* Drain pending netlink messages; apply RTM_NEWLINK admin state to the chip. */
-static void bcmd_nl_process(int fd)
+/* Ask the kernel to dump current addrs, neighbors, and routes so we program the
+ * existing FIB (not just live changes). Responses arrive on the socket and are
+ * handled by bcmd_nl_process. Order addr->neigh->route so gateways resolve. */
+static void bcmd_nl_drain(int fd);   /* fwd: consume a dump fully before the next */
+
+static void bcmd_nl_dump(int fd, int type)
 {
-    char buf[8192];
-    int len;
-    struct nlmsghdr *nh;
-    len = (int)recv(fd, buf, sizeof(buf), MSG_DONTWAIT);
-    if (len <= 0) return;
-    for (nh = (struct nlmsghdr *)buf; NLMSG_OK(nh, (unsigned)len);
-         nh = NLMSG_NEXT(nh, len)) {
-        struct ifinfomsg *ifi;
-        int port, want, cur;
-        if (nh->nlmsg_type != RTM_NEWLINK) continue;
-        ifi = (struct ifinfomsg *)NLMSG_DATA(nh);
-        port = bcmd_port_for_ifindex(ifi->ifi_index);
-        if (port < 0) continue;
+    struct { struct nlmsghdr nh; struct rtgenmsg g; } req;
+    struct sockaddr_nl sa;
+    memset(&req, 0, sizeof(req));
+    req.nh.nlmsg_len = sizeof(req);
+    req.nh.nlmsg_type = type;
+    req.nh.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+    req.g.rtgen_family = AF_INET;
+    memset(&sa, 0, sizeof(sa)); sa.nl_family = AF_NETLINK;
+    (void)sendto(fd, &req, sizeof(req), 0, (struct sockaddr *)&sa, sizeof(sa));
+    /* Netlink allows only one dump in flight per socket — drain this one fully
+     * (until NLMSG_DONE) before the caller issues the next, else it gets EBUSY. */
+    bcmd_nl_drain(fd);
+}
+
+static struct rtattr *bcmd_rta(struct rtattr *rta, int len, int type)
+{
+    for (; RTA_OK(rta, len); rta = RTA_NEXT(rta, len))
+        if (rta->rta_type == type) return rta;
+    return NULL;
+}
+
+/* Apply one netlink message to the chip (link admin + L3 FIB). */
+static void bcmd_nl_handle(struct nlmsghdr *nh)
+{
+    if (nh->nlmsg_type == RTM_NEWLINK) {
+        struct ifinfomsg *ifi = (struct ifinfomsg *)NLMSG_DATA(nh);
+        int port = bcmd_port_for_ifindex(ifi->ifi_index), want, cur = -1;
+        if (port < 0) return;
         want = (ifi->ifi_flags & IFF_UP) ? 1 : 0;
-        cur = -1;
         bcm_port_enable_get(BCMD_UNIT, port, &cur);
         if (cur != want) {
             bcm_port_enable_set(BCMD_UNIT, port, want);
             printf("[bcmd] netlink: %s -> chip port %d admin %s\n",
                    SOC_PORT_NAME(BCMD_UNIT, port), port, want ? "UP" : "DOWN");
+        }
+
+    } else if (nh->nlmsg_type == RTM_NEWADDR) {
+        struct ifaddrmsg *ifa = (struct ifaddrmsg *)NLMSG_DATA(nh);
+        int port = bcmd_port_for_ifindex(ifa->ifa_index), alen;
+        struct rtattr *local;
+        if (port < 0 || ifa->ifa_family != AF_INET) return;
+        (void)bcmd_l3_intf_ensure(port, BCMD_VLAN);   /* switch IP -> L3 intf */
+        alen = (int)(nh->nlmsg_len - NLMSG_LENGTH(sizeof(*ifa)));
+        local = bcmd_rta((struct rtattr *)IFA_RTA(ifa), alen, IFA_LOCAL);
+        if (!local)
+            local = bcmd_rta((struct rtattr *)IFA_RTA(ifa), alen, IFA_ADDRESS);
+        if (local)
+            bcmd_l3_local_ip(ntohl(*(unsigned int *)RTA_DATA(local)));
+
+    } else if (nh->nlmsg_type == RTM_NEWNEIGH) {
+        struct ndmsg *nd = (struct ndmsg *)NLMSG_DATA(nh);
+        struct rtattr *dst, *lla;
+        int port = bcmd_port_for_ifindex(nd->ndm_ifindex);
+        if (port < 0 || nd->ndm_family != AF_INET) return;
+        if (!(nd->ndm_state & (NUD_REACHABLE|NUD_PERMANENT|NUD_STALE|NUD_DELAY|NUD_PROBE)))
+            return;                                    /* skip FAILED/INCOMPLETE */
+        dst = bcmd_rta((struct rtattr *)((char *)nd + NLMSG_ALIGN(sizeof(*nd))),
+                       (int)(nh->nlmsg_len - NLMSG_LENGTH(sizeof(*nd))), NDA_DST);
+        lla = bcmd_rta((struct rtattr *)((char *)nd + NLMSG_ALIGN(sizeof(*nd))),
+                       (int)(nh->nlmsg_len - NLMSG_LENGTH(sizeof(*nd))), NDA_LLADDR);
+        if (dst && lla)
+            bcmd_l3_neigh_add(port, ntohl(*(unsigned int *)RTA_DATA(dst)),
+                              (unsigned char *)RTA_DATA(lla));
+
+    } else if (nh->nlmsg_type == RTM_NEWROUTE) {
+        struct rtmsg *rtm = (struct rtmsg *)NLMSG_DATA(nh);
+        struct rtattr *dst, *gw, *oif;
+        int alen, port;
+        bcm_ip_t pfx = 0, gwip = 0;
+        if (rtm->rtm_family != AF_INET) return;
+        if (rtm->rtm_table != RT_TABLE_MAIN && rtm->rtm_table != 0) return;
+        alen = (int)(nh->nlmsg_len - NLMSG_LENGTH(sizeof(*rtm)));
+        dst = bcmd_rta((struct rtattr *)((char *)rtm + NLMSG_ALIGN(sizeof(*rtm))), alen, RTA_DST);
+        gw  = bcmd_rta((struct rtattr *)((char *)rtm + NLMSG_ALIGN(sizeof(*rtm))), alen, RTA_GATEWAY);
+        oif = bcmd_rta((struct rtattr *)((char *)rtm + NLMSG_ALIGN(sizeof(*rtm))), alen, RTA_OIF);
+        if (!gw || !oif) return;                       /* only gateway routes */
+        if (dst) pfx = ntohl(*(unsigned int *)RTA_DATA(dst));
+        gwip = ntohl(*(unsigned int *)RTA_DATA(gw));
+        port = bcmd_port_for_ifindex(*(int *)RTA_DATA(oif));
+        if (port >= 0) bcmd_l3_route_add(pfx, rtm->rtm_dst_len, gwip, port);
+    }
+}
+
+/* One non-blocking read of pending events (live multicast updates). */
+static void bcmd_nl_process(int fd)
+{
+    char buf[16384];
+    int len;
+    struct nlmsghdr *nh;
+    len = (int)recv(fd, buf, sizeof(buf), MSG_DONTWAIT);
+    if (len <= 0) return;
+    for (nh = (struct nlmsghdr *)buf; NLMSG_OK(nh, (unsigned)len);
+         nh = NLMSG_NEXT(nh, len))
+        bcmd_nl_handle(nh);
+}
+
+/* Blocking-drain a dump response: read until NLMSG_DONE/ERROR so the socket is
+ * free for the next dump (one dump in flight per netlink socket). */
+static void bcmd_nl_drain(int fd)
+{
+    char buf[16384];
+    int len, done = 0, guard = 0;
+    struct nlmsghdr *nh;
+    while (!done && guard++ < 4096) {
+        len = (int)recv(fd, buf, sizeof(buf), 0);   /* blocking until the dump arrives */
+        if (len <= 0) return;
+        for (nh = (struct nlmsghdr *)buf; NLMSG_OK(nh, (unsigned)len);
+             nh = NLMSG_NEXT(nh, len)) {
+            if (nh->nlmsg_type == NLMSG_DONE || nh->nlmsg_type == NLMSG_ERROR) {
+                done = 1; break;
+            }
+            bcmd_nl_handle(nh);
         }
     }
 }
@@ -663,9 +907,14 @@ int bcmd_run(void)
     for (port = 0; port < BCMD_MAXPORT; port++)
         if (bcmd_is_front(port)) bcmd_netdev_up(SOC_PORT_NAME(BCMD_UNIT, port));
     nlfd = bcmd_nl_open();
+    if (nlfd >= 0) {                       /* program the existing FIB into the chip */
+        bcmd_nl_dump(nlfd, RTM_GETADDR);
+        bcmd_nl_dump(nlfd, RTM_GETNEIGH);
+        bcmd_nl_dump(nlfd, RTM_GETROUTE);
+    }
 
-    printf("[bcmd] datapath UP — every port is a Linux netdev (ge0..ge47, xe0..xe5).\n"
-           "[bcmd] Linux-controlled: ip addr add 10.14.1.2/24 dev ge25; ip link set ge25 up/down\n");
+    printf("[bcmd] datapath UP — every port a Linux netdev; L3 FIB mirrored to chip.\n"
+           "[bcmd] Linux-controlled: ip addr/link/route + OSPF/BGP -> ASIC L3 tables.\n");
 
     signal(SIGINT,  bcmd_on_sig);
     signal(SIGTERM, bcmd_on_sig);
@@ -675,9 +924,14 @@ int bcmd_run(void)
             struct pollfd pfd;
             pfd.fd = nlfd; pfd.events = POLLIN; pfd.revents = 0;
             if (poll(&pfd, 1, 2000) > 0 && (pfd.revents & POLLIN))
-                bcmd_nl_process(nlfd);     /* apply ip-link admin changes to chip */
+                bcmd_nl_process(nlfd);     /* apply link/addr/neigh/route to chip */
         } else {
             sal_sleep(2);
+        }
+        /* periodic FIB re-dump: converge routes whose gateway resolved later. */
+        if (nlfd >= 0 && (tick % 15) == 14) {
+            bcmd_nl_dump(nlfd, RTM_GETNEIGH);
+            bcmd_nl_dump(nlfd, RTM_GETROUTE);
         }
         if ((++tick % 5) == 0) bcmd_link_summary();   /* ~every 10s */
         /* TODO next: RTM_NEWADDR/NEWNEIGH/NEWROUTE -> chip L3 (intf/host/route)

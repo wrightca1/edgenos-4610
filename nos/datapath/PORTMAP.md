@@ -23,12 +23,16 @@
 |---|---|---|
 | **1** | **ge25** | confirmed on hardware |
 | **2** | **ge24** | confirmed on hardware |
-| 3–48 | **TBD** | needs empirical mapping |
+| **3** | **ge26** | confirmed 2026-06-10 (cable move port2→3: ge24↓ ge26↑) |
+| 4–48 | **TBD** | needs empirical mapping |
 
-**Observed pattern (preliminary):** adjacent physical jacks are **pair-swapped** —
-pair (1,2) → (ge25, ge24) — and ports 1–8 appear to live in the **ge24–31** MDIO
-bank, i.e. the bank order is also scrambled vs. the silkscreen. Full permutation
-pending more data points (ports 3, 9, 48 …). Logical port 49 (ge48) is internal.
+**Observed (3 data points): 1→ge25, 2→ge24, 3→ge26.** This **disproves the earlier
+"pair-swap" guess** (which predicted port 3 → ge27). The first ports do live in the
+**ge24–31** MDIO bank, but the in-bank order is not a simple swap. Working
+hypothesis to test next: odd jacks climb (1,3,5… → ge25,26,27…) while even jacks
+descend (2,4,6… → ge24,23,22…) — needs port 4 (predict ge23) to confirm or kill.
+Logical port 49 (ge48) is internal. Method: move one cable, watch which geN appears
+in bcmd's `link:` summary (`grep link: /tmp/bcmd.log`).
 
 ### Copper MDIO addresses (octal BCM54282, gapped — NOT a formula)
 | SDK | jacks | MDIO bus | MDIO addrs |
