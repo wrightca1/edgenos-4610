@@ -1,28 +1,34 @@
-# AS4610-54T — front-panel ↔ chip port map (verified)
+# AS4610-54T — front-panel ↔ chip port map
 
-Authoritative mapping between **front-panel silkscreen numbers** and the Broadcom
-**BCM56340** SDK port names / logical port IDs. Cross-verified across three
-sources that all agree: the live **ICOS 3.4.3.7** `phy info` capture
-(`live-investigation/dumps/icos_linked_2026_06_06/19_phy_map_and_copper.txt`),
-`config.bcm.as4610-54t` (`port_phy_addr_*`), and `mdk-app/edged.c` (`ge_phy_addr[]`,
-"front-panel jack = geN+1").
+> **⚠️ The copper silkscreen→ge map is NOT sequential, and is still being mapped
+> empirically.** An earlier version of this file claimed "jack N = ge(N−1)"
+> (from an unverified comment in `edged.c`). **Hardware testing disproved it.**
+> None of our captured sources actually contain the copper silkscreen layout —
+> ICOS `phy info` only lists the SDK *logical* `geN` numbers, ONLP only maps the
+> SFP+ ports, and `config.bcm` only has MDIO addresses. The real map must be
+> built by plugging a cable into each physical jack and reading which `geN`
+> lights up (bcmd's link summary in `/tmp/bcmd.log` does exactly this).
 
-`bcmd` brings up **every** port as a Linux netdev named by the SDK name below.
-
-## Mapping
-
-| Front panel (silkscreen) | SDK name (netdev) | Logical port | PHY | MDIO addr / bus |
+## SFP+ / stacking (user-confirmed)
+| Front panel | SDK name (netdev) | Logical port | PHY | MDIO / bus |
 |---|---|---|---|---|
-| Copper jack **N** (1–48) | **ge(N−1)** | **N** | BCM54282 | see below |
 | SFP+ **49** | **xe0** | 50 | BCM84758 | 0x40 / 0xc1 |
 | SFP+ **50** | **xe1** | 51 | BCM84758 | 0x41 / 0xc1 |
 | SFP+ **51** | **xe2** | 52 | BCM84758 | 0x42 / 0xc1 |
 | SFP+ **52** | **xe3** | 53 | BCM84758 | 0x43 / 0xc1 |
-| Stacking **53** | **xe4** | 54 | Warpcore (internal) | — |
-| Stacking **54** | **xe5** | 55 | Warpcore (internal) | — |
+| Stacking **53–54** | **xe4–xe5** | 54–55 | Warpcore (internal) | — |
 
-**Copper is sequential**: jack 1 = ge0, jack 26 = ge25, jack 48 = ge47.
-Logical port 49 (ge48) is internal — not a front jack.
+## Copper (48× BCM54282) — empirically verified so far
+| Physical port | SDK name (netdev) | Notes |
+|---|---|---|
+| **1** | **ge25** | confirmed on hardware |
+| **2** | **ge24** | confirmed on hardware |
+| 3–48 | **TBD** | needs empirical mapping |
+
+**Observed pattern (preliminary):** adjacent physical jacks are **pair-swapped** —
+pair (1,2) → (ge25, ge24) — and ports 1–8 appear to live in the **ge24–31** MDIO
+bank, i.e. the bank order is also scrambled vs. the silkscreen. Full permutation
+pending more data points (ports 3, 9, 48 …). Logical port 49 (ge48) is internal.
 
 ### Copper MDIO addresses (octal BCM54282, gapped — NOT a formula)
 | SDK | jacks | MDIO bus | MDIO addrs |

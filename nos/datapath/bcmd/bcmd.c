@@ -73,11 +73,13 @@ static const bcm_mac_t BCMD_HOST_MAC = {0x02, 0x10, 0x18, 0x96, 0x59, 0xdd};
 static volatile sig_atomic_t bcmd_g_run = 1;
 static void bcmd_on_sig(int s) { (void)s; bcmd_g_run = 0; }
 
-/* Front-panel ethernet logical ports, VERIFIED against the live ICOS phy map:
- * copper ge0..ge47 = logical 1..48 (silkscreen jack N = ge(N-1)); SFP+ xe0..xe3
- * = 50..53 (silkscreen 49..52); stacking xe4..xe5 = 54..55. Logical 49 (ge48)
- * is internal. (We iterate this explicit set instead of the SDK pbmp macros,
- * which don't expand cleanly in this -ansi build.) */
+/* Front-panel ethernet LOGICAL ports: copper ge0..ge47 = logical 1..48; SFP+
+ * xe0..xe3 = 50..53; stacking xe4..xe5 = 54..55; logical 49 (ge48) is internal.
+ * (We iterate this explicit set instead of the SDK pbmp macros, which don't
+ * expand cleanly in this -ansi build.)
+ * NOTE: the silkscreen-jack -> geN map is NOT sequential; it's scrambled
+ * (verified on HW: physical port 1 = ge25, port 2 = ge24, pair-swapped). The
+ * netdev names here are the chip-logical SDK names. See ../PORTMAP.md. */
 static int bcmd_is_front(int p)
 {
     return (p >= 1 && p <= 48) || (p >= 50 && p <= 55);
