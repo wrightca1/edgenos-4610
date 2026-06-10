@@ -53,21 +53,18 @@
 /* ------------------------------------------------------------------ config */
 
 #define BCMD_UNIT       0
-#define BCMD_VLAN       1           /* untagged access; both ports share VLAN 1 */
+#define BCMD_VLAN       1           /* untagged access; all ports share VLAN 1 */
 
-/* Ports brought up SIMULTANEOUSLY, each as its own Linux netdev + CPU-punt path.
- * Add/remove rows here; bcmd loops over the table. `is_sfp` = run the 84758
- * laser/status read (SFP+ ports only). */
-static const struct {
-    bcm_port_t  port;       /* chip logical port */
-    const char *ifname;     /* Linux netdev name */
-    int         is_sfp;     /* SFP+ (84758) vs copper (54282) */
-} BCMD_PORTS[] = {
-    { 26, "port1",  0 },    /* ge25 = front-panel port 1, copper 54282, 10.14.1.0/24 */
-    { 50, "uplink", 1 },    /* xe0  = front-panel port 49, SFP+ 84758, 10.101.102.0/29
-                               (link blocked on optical overdrive — see README) */
-};
-#define BCMD_NPORTS ((int)(sizeof(BCMD_PORTS) / sizeof(BCMD_PORTS[0])))
+/* EVERY front-panel ethernet port is auto-discovered (bcm_port_config_get -> .e)
+ * and brought up as its own Linux netdev, named by the SDK port name (ge0..ge47,
+ * xe0..xe5). No hardcoded table — the chip tells us the ports. The user assigns
+ * IPs in Linux (`ip addr add ... dev ge25`), the SONiC/Cumulus model.
+ *
+ * NOTE: all ports default to VLAN 1, so the chip L2-bridges any ports that share
+ * an external segment — keep different networks on different ports (and never two
+ * ports on the mgmt 10.1.1 LAN) to avoid an L2 loop. Per-port VLAN isolation /
+ * L3 comes with the netlink->chip sync layer. */
+#define BCMD_MAXPORT    128         /* sizing for per-port netif-id array */
 
 /* MAC surfaced on the netdevs (shared; per-port RX is disambiguated by the
  * ingress-port KNET filter, and per-port TX by each netif's TX_LOCAL_PORT). */
@@ -75,6 +72,16 @@ static const bcm_mac_t BCMD_HOST_MAC = {0x02, 0x10, 0x18, 0x96, 0x59, 0xdd};
 
 static volatile sig_atomic_t bcmd_g_run = 1;
 static void bcmd_on_sig(int s) { (void)s; bcmd_g_run = 0; }
+
+/* Front-panel ethernet logical ports, VERIFIED against the live ICOS phy map:
+ * copper ge0..ge47 = logical 1..48 (silkscreen jack N = ge(N-1)); SFP+ xe0..xe3
+ * = 50..53 (silkscreen 49..52); stacking xe4..xe5 = 54..55. Logical 49 (ge48)
+ * is internal. (We iterate this explicit set instead of the SDK pbmp macros,
+ * which don't expand cleanly in this -ansi build.) */
+static int bcmd_is_front(int p)
+{
+    return (p >= 1 && p <= 48) || (p >= 50 && p <= 55);
+}
 
 #define BCMD_CHK(expr) do {                                                    \
         int _rv = (expr);                                                      \
@@ -172,56 +179,71 @@ static int bcmd_knet_setup(int netif_ids[])
 {
     bcm_knet_netif_t   netif;
     bcm_knet_filter_t  filter;
-    int i, p;
+    int i, port, first = -1, n = 0;
 
     BCMD_CHK(bcm_knet_init(BCMD_UNIT));
 
     /* Idempotent: the kernel module persists netifs/filters across processes.
      * Tear down any stale ones by id (filter 1 = auto DefaultRxAPI; leave it). */
-    for (i = 2; i <= 32; i++) (void)bcm_knet_filter_destroy(BCMD_UNIT, i);
-    for (i = 1; i <= 32; i++) (void)bcm_knet_netif_destroy(BCMD_UNIT, i);
+    for (i = 2; i <= BCMD_MAXPORT + 2; i++) (void)bcm_knet_filter_destroy(BCMD_UNIT, i);
+    for (i = 1; i <= BCMD_MAXPORT + 2; i++) (void)bcm_knet_netif_destroy(BCMD_UNIT, i);
 
-    /* one TX_LOCAL_PORT netdev per port */
-    for (p = 0; p < BCMD_NPORTS; p++) {
+    /* one TX_LOCAL_PORT netdev per port, named by SDK port name (ge*,xe*).
+     * Per-port failures (e.g. KNET resource limit) are logged, not fatal. */
+    for (port = 0; port < BCMD_MAXPORT; port++) {
+        const char *nm;
+        int rv;
+        if (!bcmd_is_front(port)) continue;
+        nm = SOC_PORT_NAME(BCMD_UNIT, port);
+        netif_ids[port] = 0;
         bcm_knet_netif_t_init(&netif);
         netif.type = BCM_KNET_NETIF_T_TX_LOCAL_PORT;   /* TX egresses this port */
-        netif.port = BCMD_PORTS[p].port;
+        netif.port = port;
         netif.vlan = BCMD_VLAN;
         sal_memcpy(netif.mac_addr, BCMD_HOST_MAC, sizeof(bcm_mac_t));
-        sal_strncpy(netif.name, BCMD_PORTS[p].ifname, sizeof(netif.name) - 1);
-        BCMD_CHK(bcm_knet_netif_create(BCMD_UNIT, &netif));
-        netif_ids[p] = netif.id;
-        printf("[bcmd] knet netif '%s' id=%d on port %d\n",
-               netif.name, netif.id, BCMD_PORTS[p].port);
+        if (nm && nm[0]) sal_strncpy(netif.name, nm, sizeof(netif.name) - 1);
+        else snprintf(netif.name, sizeof(netif.name) - 1, "p%d", port);
+        rv = bcm_knet_netif_create(BCMD_UNIT, &netif);
+        if (rv != BCM_E_NONE) {
+            printf("[bcmd] WARN netif create port %d (%s) failed: %s\n",
+                   port, netif.name, bcm_errmsg(rv));
+            continue;
+        }
+        netif_ids[port] = netif.id;
+        if (first < 0) first = netif.id;
+        n++;
     }
+    printf("[bcmd] created %d port netdevs\n", n);
 
-    /* per-port ingress-port filters (created first -> matched first) */
-    for (p = 0; p < BCMD_NPORTS; p++) {
+    /* per-port ingress-port filter (created first -> matched first), striptag */
+    for (port = 0; port < BCMD_MAXPORT; port++) {
+        if (!bcmd_is_front(port)) continue;
+        if (!netif_ids[port]) continue;
         bcm_knet_filter_t_init(&filter);
         filter.type        = BCM_KNET_FILTER_T_RX_PKT;
         filter.priority    = 0;
         filter.dest_type   = BCM_KNET_DEST_T_NETIF;
-        filter.dest_id     = netif_ids[p];
+        filter.dest_id     = netif_ids[port];
         filter.match_flags = BCM_KNET_FILTER_M_INGPORT;
-        filter.m_ingport   = BCMD_PORTS[p].port;
+        filter.m_ingport   = port;
         filter.flags       = BCM_KNET_FILTER_F_STRIP_TAG;
-        sal_strncpy(filter.desc, BCMD_PORTS[p].ifname, sizeof(filter.desc) - 1);
-        BCMD_CHK(bcm_knet_filter_create(BCMD_UNIT, &filter));
-        printf("[bcmd] knet filter ingport %d -> netif %d '%s' (striptag)\n",
-               BCMD_PORTS[p].port, netif_ids[p], BCMD_PORTS[p].ifname);
+        sal_strncpy(filter.desc, SOC_PORT_NAME(BCMD_UNIT, port), sizeof(filter.desc) - 1);
+        (void)bcm_knet_filter_create(BCMD_UNIT, &filter);
     }
 
     /* catch-all (created last -> matched last) -> first netdev, so nothing
      * accumulates on the consumer-less DefaultRxAPI and wedges the RX ring. */
-    bcm_knet_filter_t_init(&filter);
-    filter.type      = BCM_KNET_FILTER_T_RX_PKT;
-    filter.priority  = 0;
-    filter.dest_type = BCM_KNET_DEST_T_NETIF;
-    filter.dest_id   = netif_ids[0];
-    filter.flags     = BCM_KNET_FILTER_F_STRIP_TAG;
-    sal_strncpy(filter.desc, "catch-all", sizeof(filter.desc) - 1);
-    BCMD_CHK(bcm_knet_filter_create(BCMD_UNIT, &filter));
-    printf("[bcmd] knet catch-all -> netif %d (fallback, striptag)\n", netif_ids[0]);
+    if (first >= 0) {
+        bcm_knet_filter_t_init(&filter);
+        filter.type      = BCM_KNET_FILTER_T_RX_PKT;
+        filter.priority  = 0;
+        filter.dest_type = BCM_KNET_DEST_T_NETIF;
+        filter.dest_id   = first;
+        filter.flags     = BCM_KNET_FILTER_F_STRIP_TAG;
+        sal_strncpy(filter.desc, "catch-all", sizeof(filter.desc) - 1);
+        BCMD_CHK(bcm_knet_filter_create(BCMD_UNIT, &filter));
+        printf("[bcmd] knet per-port ingress filters + catch-all -> netif %d (striptag)\n", first);
+    }
     return 0;
 }
 
@@ -468,13 +490,35 @@ static void bcmd_link_status(bcm_port_t port)
 /* ------------------------------------------------------------------- entry */
 /* Called from socdiag's main() in place of diag_shell(). SAL/kcom/chip_info
  * config + config.bcm have already been done by main(). */
+/* One-line summary of which ports have carrier (avoids 54 lines every tick). */
+static void bcmd_link_summary(void)
+{
+    int port, link, up = 0, total = 0;
+    char buf[256]; int n = 0;
+    buf[0] = 0;
+    for (port = 0; port < BCMD_MAXPORT; port++) {
+        if (!bcmd_is_front(port)) continue;
+        total++;
+        link = 0;
+        if (bcm_port_link_status_get(BCMD_UNIT, port, &link) == BCM_E_NONE &&
+            link == BCM_PORT_LINK_STATUS_UP) {
+            int sp = 0; bcm_port_speed_get(BCMD_UNIT, port, &sp);
+            up++;
+            if (n < (int)sizeof(buf) - 24)
+                n += snprintf(buf + n, sizeof(buf) - n, " %s(%dG)",
+                                  SOC_PORT_NAME(BCMD_UNIT, port), sp / 1000);
+        }
+    }
+    printf("[bcmd] link: %d/%d up:%s\n", up, total, up ? buf : " (none)");
+}
+
 int bcmd_run(void)
 {
-    int netif_ids[BCMD_NPORTS];
-    int tick = 0, p;
+    static int netif_ids[BCMD_MAXPORT + 1];
+    int tick = 0, port, n = 0;
 
     setvbuf(stdout, NULL, _IONBF, 0);   /* unbuffered: see logs live in /tmp/bcmd.log */
-    printf("[bcmd] EdgeNOS-4610 datapath daemon starting (%d ports)\n", BCMD_NPORTS);
+    printf("[bcmd] EdgeNOS-4610 datapath daemon starting\n");
 
     /* Board-level external-PHY enable — MUST run before `init all` so the SDK's
      * PHY probe finds + attaches the now-awake 84758 (firmware + serdes + link). */
@@ -483,27 +527,30 @@ int bcmd_run(void)
     bcmd_write_icos_miim_map();
 
     if (bcmd_chip_init() < 0) return 1;
-    for (p = 0; p < BCMD_NPORTS; p++)
-        if (bcmd_port_up(BCMD_PORTS[p].port) != BCM_E_NONE) return 1;
-    bcmd_sfp_laser_all();   /* SFP+ optic TX laser on xe0-3 (no-op effect on copper) */
-    if (bcmd_rx_start()       != BCM_E_NONE) return 1;
-    if (bcmd_knet_setup(netif_ids) != BCM_E_NONE) return 1;
-    if (bcmd_l2_punt()        != BCM_E_NONE) return 1;
 
-    printf("[bcmd] datapath UP on %d ports:", BCMD_NPORTS);
-    for (p = 0; p < BCMD_NPORTS; p++)
-        printf(" %s(port%d)", BCMD_PORTS[p].ifname, BCMD_PORTS[p].port);
-    printf(" — assign an IP to each netdev and ping.\n");
+    /* bring up every front-panel port (tolerant — one failure doesn't abort) */
+    for (port = 0; port < BCMD_MAXPORT; port++) {
+        if (!bcmd_is_front(port)) continue;
+        if (bcmd_port_up(port) == BCM_E_NONE) n++;
+    }
+    printf("[bcmd] enabled %d ports\n", n);
+
+    bcmd_sfp_laser_all();   /* SFP+ optic TX laser on xe0-3 (harmless on copper) */
+    if (bcmd_rx_start()          != BCM_E_NONE) return 1;
+    if (bcmd_knet_setup(netif_ids) != BCM_E_NONE) return 1;
+    if (bcmd_l2_punt()           != BCM_E_NONE) return 1;
+
+    printf("[bcmd] datapath UP — every port is a Linux netdev (ge0..ge47, xe0..xe5).\n"
+           "[bcmd] configure with Linux tools, e.g.: ip addr add 10.14.1.2/24 dev ge25\n");
 
     signal(SIGINT,  bcmd_on_sig);
     signal(SIGTERM, bcmd_on_sig);
-    for (p = 0; p < BCMD_NPORTS; p++) bcmd_link_status(BCMD_PORTS[p].port);
+    bcmd_link_summary();
     while (bcmd_g_run) {
         sal_sleep(2);
-        if ((++tick % 5) == 0)   /* every ~10s */
-            for (p = 0; p < BCMD_NPORTS; p++) bcmd_link_status(BCMD_PORTS[p].port);
-        /* TODO: reconcile netlink (RTM_NEWADDR/NEWROUTE) -> chip L3 tables,
-         * ARP service. Scaffold just holds the datapath up. */
+        if ((++tick % 5) == 0) bcmd_link_summary();   /* every ~10s */
+        /* TODO: netlink (RTM_NEWADDR/NEWROUTE/NEWNEIGH/link) -> chip L3/L2 tables
+         * so `ip`/`bridge`/FRR program the hardware (switchdev-style sync). */
     }
 
     printf("[bcmd] shutting down\n");
