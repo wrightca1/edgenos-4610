@@ -29,15 +29,26 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
+#include <poll.h>
+#include <net/if.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
 
 /* The SDK builder's <linux/i2c-dev.h> is the newer split header that lacks the
  * SMBus structs/constants, so we talk to the CPLD with raw i2c byte read/write
  * (I2C_SLAVE_FORCE + write()/read()). Define the one ioctl we need locally. */
 #ifndef I2C_SLAVE_FORCE
 #define I2C_SLAVE_FORCE 0x0706
+#endif
+#ifndef SIOCGIFFLAGS
+#define SIOCGIFFLAGS 0x8913
+#endif
+#ifndef SIOCSIFFLAGS
+#define SIOCSIFFLAGS 0x8914
 #endif
 
 #include <bcm/error.h>
@@ -489,6 +500,109 @@ static void bcmd_link_status(bcm_port_t port)
            COMPILER_64_LO(txu), COMPILER_64_LO(txnu), pcs, pcs & 0x1);
 }
 
+/* ----------------------------------------------- netlink -> chip control */
+/*
+ * Make Linux tools drive the hardware: a NETLINK_ROUTE listener mirrors netdev
+ * admin state to the chip port, so `ip link set ge25 up/down` enables/disables
+ * the physical port. This is the first slice of the switchdev-style sync (and
+ * the netlink foundation the L3 route/neigh sync will reuse). Integrated into
+ * the wait loop via poll() — no extra thread.
+ */
+static struct { int ifindex; int port; } bcmd_ifmap[BCMD_MAXPORT];
+static int bcmd_nifmap = 0;
+
+static int bcmd_port_for_ifindex(int idx)
+{
+    int i;
+    for (i = 0; i < bcmd_nifmap; i++)
+        if (bcmd_ifmap[i].ifindex == idx) return bcmd_ifmap[i].port;
+    return -1;
+}
+
+/* Map each port's netdev (named by SOC_PORT_NAME) to its kernel ifindex. */
+static void bcmd_build_ifmap(void)
+{
+    int port;
+    bcmd_nifmap = 0;
+    for (port = 0; port < BCMD_MAXPORT; port++) {
+        const char *nm;
+        unsigned idx;
+        if (!bcmd_is_front(port)) continue;
+        nm = SOC_PORT_NAME(BCMD_UNIT, port);
+        if (!nm || !nm[0]) continue;
+        idx = if_nametoindex(nm);
+        if (idx > 0 && bcmd_nifmap < BCMD_MAXPORT) {
+            bcmd_ifmap[bcmd_nifmap].ifindex = (int)idx;
+            bcmd_ifmap[bcmd_nifmap].port = port;
+            bcmd_nifmap++;
+        }
+    }
+    printf("[bcmd] netlink: mapped %d netdevs -> chip ports\n", bcmd_nifmap);
+}
+
+/* Set a netdev admin-UP via ioctl, so its admin state matches the chip-enabled
+ * state at startup. Without this, the netdevs start admin-DOWN while the chip
+ * ports are enabled; carrier-change RTM_NEWLINK events (IFF_UP clear) would then
+ * make the listener wrongly disable the chip port. Done BEFORE the socket opens
+ * so these events aren't fed back. */
+static void bcmd_netdev_up(const char *name)
+{
+    int s;
+    struct ifreq ifr;
+    if (!name || !name[0]) return;
+    s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) return;
+    memset(&ifr, 0, sizeof(ifr));
+    sal_strncpy(ifr.ifr_name, name, IFNAMSIZ - 1);
+    if (ioctl(s, SIOCGIFFLAGS, &ifr) == 0 && !(ifr.ifr_flags & IFF_UP)) {
+        ifr.ifr_flags |= IFF_UP;
+        (void)ioctl(s, SIOCSIFFLAGS, &ifr);
+    }
+    close(s);
+}
+
+static int bcmd_nl_open(void)
+{
+    int fd;
+    struct sockaddr_nl sa;
+    fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
+    if (fd < 0) { printf("[bcmd] netlink socket: %s\n", strerror(errno)); return -1; }
+    memset(&sa, 0, sizeof(sa));
+    sa.nl_family = AF_NETLINK;
+    sa.nl_groups = RTMGRP_LINK;          /* live link admin-state changes */
+    if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+        printf("[bcmd] netlink bind: %s\n", strerror(errno)); close(fd); return -1;
+    }
+    return fd;
+}
+
+/* Drain pending netlink messages; apply RTM_NEWLINK admin state to the chip. */
+static void bcmd_nl_process(int fd)
+{
+    char buf[8192];
+    int len;
+    struct nlmsghdr *nh;
+    len = (int)recv(fd, buf, sizeof(buf), MSG_DONTWAIT);
+    if (len <= 0) return;
+    for (nh = (struct nlmsghdr *)buf; NLMSG_OK(nh, (unsigned)len);
+         nh = NLMSG_NEXT(nh, len)) {
+        struct ifinfomsg *ifi;
+        int port, want, cur;
+        if (nh->nlmsg_type != RTM_NEWLINK) continue;
+        ifi = (struct ifinfomsg *)NLMSG_DATA(nh);
+        port = bcmd_port_for_ifindex(ifi->ifi_index);
+        if (port < 0) continue;
+        want = (ifi->ifi_flags & IFF_UP) ? 1 : 0;
+        cur = -1;
+        bcm_port_enable_get(BCMD_UNIT, port, &cur);
+        if (cur != want) {
+            bcm_port_enable_set(BCMD_UNIT, port, want);
+            printf("[bcmd] netlink: %s -> chip port %d admin %s\n",
+                   SOC_PORT_NAME(BCMD_UNIT, port), port, want ? "UP" : "DOWN");
+        }
+    }
+}
+
 /* ------------------------------------------------------------------- entry */
 /* Called from socdiag's main() in place of diag_shell(). SAL/kcom/chip_info
  * config + config.bcm have already been done by main(). */
@@ -517,7 +631,7 @@ static void bcmd_link_summary(void)
 int bcmd_run(void)
 {
     static int netif_ids[BCMD_MAXPORT + 1];
-    int tick = 0, port, n = 0;
+    int tick = 0, port, n = 0, nlfd = -1;
 
     setvbuf(stdout, NULL, _IONBF, 0);   /* unbuffered: see logs live in /tmp/bcmd.log */
     printf("[bcmd] EdgeNOS-4610 datapath daemon starting\n");
@@ -542,17 +656,32 @@ int bcmd_run(void)
     if (bcmd_knet_setup(netif_ids) != BCM_E_NONE) return 1;
     if (bcmd_l2_punt()           != BCM_E_NONE) return 1;
 
+    /* netlink -> chip control: `ip link set geN up/down` drives the chip port.
+     * Bring every netdev admin-up FIRST (matches the chip-enabled state) so the
+     * listener only acts on real admin changes, then open the socket. */
+    bcmd_build_ifmap();
+    for (port = 0; port < BCMD_MAXPORT; port++)
+        if (bcmd_is_front(port)) bcmd_netdev_up(SOC_PORT_NAME(BCMD_UNIT, port));
+    nlfd = bcmd_nl_open();
+
     printf("[bcmd] datapath UP — every port is a Linux netdev (ge0..ge47, xe0..xe5).\n"
-           "[bcmd] configure with Linux tools, e.g.: ip addr add 10.14.1.2/24 dev ge25\n");
+           "[bcmd] Linux-controlled: ip addr add 10.14.1.2/24 dev ge25; ip link set ge25 up/down\n");
 
     signal(SIGINT,  bcmd_on_sig);
     signal(SIGTERM, bcmd_on_sig);
     bcmd_link_summary();
     while (bcmd_g_run) {
-        sal_sleep(2);
-        if ((++tick % 5) == 0) bcmd_link_summary();   /* every ~10s */
-        /* TODO: netlink (RTM_NEWADDR/NEWROUTE/NEWNEIGH/link) -> chip L3/L2 tables
-         * so `ip`/`bridge`/FRR program the hardware (switchdev-style sync). */
+        if (nlfd >= 0) {
+            struct pollfd pfd;
+            pfd.fd = nlfd; pfd.events = POLLIN; pfd.revents = 0;
+            if (poll(&pfd, 1, 2000) > 0 && (pfd.revents & POLLIN))
+                bcmd_nl_process(nlfd);     /* apply ip-link admin changes to chip */
+        } else {
+            sal_sleep(2);
+        }
+        if ((++tick % 5) == 0) bcmd_link_summary();   /* ~every 10s */
+        /* TODO next: RTM_NEWADDR/NEWNEIGH/NEWROUTE -> chip L3 (intf/host/route)
+         * so `ip route`/`bridge`/FRR program hardware forwarding. */
     }
 
     printf("[bcmd] shutting down\n");
