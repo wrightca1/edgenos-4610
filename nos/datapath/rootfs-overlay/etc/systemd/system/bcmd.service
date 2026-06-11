@@ -1,0 +1,21 @@
+[Unit]
+Description=EdgeNOS-4610 bcmd — BCM56340 datapath daemon
+After=local-fs.target
+ConditionPathExists=/mnt/onl/data/bcmd
+
+[Service]
+Type=simple
+WorkingDirectory=/mnt/onl/data
+# Prep: unbind built-in CMIC, load GPL BDE + KNET (default_mtu=1600 to match the
+# 1600-MTU peer network), mknod devnodes, deassert the external-PHY CPLD reset.
+# bringup-bcmd.sh does exactly this; -n would launch bcmd too, so we run a prep-
+# only pass then exec bcmd in the foreground for systemd to track.
+ExecStartPre=/mnt/onl/data/bcmd-prep.sh
+ExecStart=/mnt/onl/data/bcmd
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/tmp/bcmd.log
+StandardError=append:/tmp/bcmd.log
+
+[Install]
+WantedBy=multi-user.target
