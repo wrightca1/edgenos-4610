@@ -69,7 +69,15 @@
 /* ------------------------------------------------------------------ config */
 
 #define BCMD_UNIT       0
-#define BCMD_VLAN       1           /* untagged access; all ports share VLAN 1 */
+#define BCMD_VLAN       1           /* default VLAN (front ports moved off it) */
+#define BCMD_CPU_PORT   0           /* CMIC/CPU logical port */
+
+/* Per-port VLAN: each front port lives in its OWN VLAN (broadcast domain) so the
+ * chip ROUTES between ports (via the L3 tables) instead of L2-bridging them. This
+ * stops one segment's broadcast (e.g. the copper 10.14.1 LAN) from flooding out
+ * another port (e.g. the SFP+ uplink). VLAN id = 100 + logical port (avoids the
+ * default VLAN 1); ports < 4000 so no overflow. */
+#define bcmd_vlan_for_port(p) ((bcm_vlan_t)(100 + (p)))
 
 /* EVERY front-panel ethernet port is auto-discovered (bcm_port_config_get -> .e)
  * and brought up as its own Linux netdev, named by the SDK port name (ge0..ge47,
@@ -137,6 +145,30 @@ static int bcmd_chip_init(void)
 
 /* --------------------------------------------------------------- port up */
 
+/* Move a front port into its own VLAN: create it, add {port (untagged), CPU},
+ * pull the port out of default VLAN 1, and set the port PVID. Result — the port
+ * is its own L2 broadcast domain; cross-port traffic must be L3-routed. CPU is a
+ * member so broadcast/ARP on the port still floods to the CPU for punt. */
+static int bcmd_vlan_isolate(bcm_port_t port)
+{
+    bcm_vlan_t vlan = bcmd_vlan_for_port(port);
+    bcm_pbmp_t pbmp, ubmp, rbmp;
+    int rv;
+    rv = bcm_vlan_create(BCMD_UNIT, vlan);
+    if (rv != BCM_E_NONE && rv != BCM_E_EXISTS) {
+        printf("[bcmd] vlan %d create rv=%d\n", vlan, rv);
+        return rv;
+    }
+    BCM_PBMP_CLEAR(pbmp); BCM_PBMP_CLEAR(ubmp); BCM_PBMP_CLEAR(rbmp);
+    BCM_PBMP_PORT_ADD(pbmp, port); BCM_PBMP_PORT_ADD(pbmp, BCMD_CPU_PORT);
+    BCM_PBMP_PORT_ADD(ubmp, port);
+    (void)bcm_vlan_port_add(BCMD_UNIT, vlan, pbmp, ubmp);
+    BCM_PBMP_PORT_ADD(rbmp, port);
+    (void)bcm_vlan_port_remove(BCMD_UNIT, BCMD_VLAN, rbmp);   /* off default VLAN 1 */
+    (void)bcm_port_untagged_vlan_set(BCMD_UNIT, port, vlan);  /* PVID */
+    return 0;
+}
+
 static int bcmd_port_up(bcm_port_t port)
 {
     /* SW linkscan so the MAC link tracks the 54282 PHY (without it the MAC
@@ -145,6 +177,7 @@ static int bcmd_port_up(bcm_port_t port)
     BCMD_CHK(bcm_linkscan_enable_set(BCMD_UNIT, 250000));            /* 250ms */
     BCMD_CHK(bcm_linkscan_mode_set(BCMD_UNIT, port, BCM_LINKSCAN_MODE_SW));
     BCMD_CHK(bcm_port_enable_set(BCMD_UNIT, port, 1));
+    (void)bcmd_vlan_isolate(port);                                  /* own VLAN */
 
     /* Disable flow control — the diag saw a continuous TX pause-frame storm
      * that backpressured the upstream trunk. */
@@ -217,7 +250,7 @@ static int bcmd_knet_setup(int netif_ids[])
         bcm_knet_netif_t_init(&netif);
         netif.type = BCM_KNET_NETIF_T_TX_LOCAL_PORT;   /* TX egresses this port */
         netif.port = port;
-        netif.vlan = BCMD_VLAN;
+        netif.vlan = bcmd_vlan_for_port(port);
         sal_memcpy(netif.mac_addr, BCMD_HOST_MAC, sizeof(bcm_mac_t));
         if (nm && nm[0]) sal_strncpy(netif.name, nm, sizeof(netif.name) - 1);
         else snprintf(netif.name, sizeof(netif.name) - 1, "p%d", port);
@@ -274,12 +307,20 @@ static int bcmd_knet_setup(int netif_ids[])
 static int bcmd_l2_punt(void)
 {
     bcm_l2_addr_t l2;
+    int port, n = 0;
 
-    bcm_l2_addr_t_init(&l2, BCMD_HOST_MAC, BCMD_VLAN);
-    l2.flags |= BCM_L2_STATIC;
-    l2.port   = 0;                  /* CPU = port 0 */
-    BCMD_CHK(bcm_l2_addr_add(BCMD_UNIT, &l2));
-    printf("[bcmd] L2: host MAC -> CPU (static) installed\n");
+    /* Per-port VLAN now, so add the static our-MAC->CPU entry in EACH front
+     * port's VLAN (else an L2-forwarded unicast to us on that VLAN would DLF-
+     * flood out the wire instead of reaching the CPU). MY_STATION still handles
+     * the L3 path; this covers the L2 path per broadcast domain. */
+    for (port = 0; port < BCMD_MAXPORT; port++) {
+        if (!bcmd_is_front(port)) continue;
+        bcm_l2_addr_t_init(&l2, BCMD_HOST_MAC, bcmd_vlan_for_port(port));
+        l2.flags |= BCM_L2_STATIC;
+        l2.port   = BCMD_CPU_PORT;
+        if (bcm_l2_addr_add(BCMD_UNIT, &l2) == BCM_E_NONE) n++;
+    }
+    printf("[bcmd] L2: host MAC -> CPU (static) in %d per-port VLANs\n", n);
     return 0;
 }
 
@@ -310,6 +351,12 @@ extern int soc_miimc45_read(int unit, uint16 phy_id, uint8 devad,
 #define X84_CHIP_MODE   0xc805
 #define X84_REPEATER_DET 0xc81d
 #define X84_SQUELCH_CTL 0xcd18
+#define X84_EDC_MODE        0xca1a   /* EDC mode (media-RX adaptation); SR/LR = 0x44 */
+#define X84_EDC_SR_LR       0x44
+#define X84_EDC_MASK        0xff
+#define X84_RXLOS_OVERRIDE  0xc0c0   /* c8e4 RX_LOS override bits */
+#define X84_MODABS_OVERRIDE 0x0808   /* c8e4 MOD_ABS override bits */
+#define X84_RXLOS_LVL_B9    (1u << 9)/* c800 RXLOS_LVL (signal-present) bit */
 
 static void bcmd_x84_rmw(int pid, uint8 dev, uint16 reg, uint16 clr, uint16 set)
 {
@@ -468,11 +515,80 @@ static void bcmd_sfp_scan(void)
     if (!n) printf("   (nothing responded on any phy_id)\n");
 }
 
+/* Bring up the 84758 REPEATER datapath the SDK leaves down (the 84758 isn't xe0's
+ * chained port PHY, so phy84740's datapath setup never runs). Ported from edged's
+ * proven sfp_tx_enable steps (0b)+(5):
+ *   (0b) clear media PCS reset 1.0xcd17 -> 10GBASE-R block-locks on the media side.
+ *   (5)  if in repeater/retimer mode (1.0xc81d b1|b2=0x6), un-squelch media->system
+ *        via SYSTEM-side 3.0xcd18 (b4 RX + b6 enable) so the locked media RX is
+ *        repeated to the Warpcore. Without (5): rx_link=1 yet 0 frames reach the MAC.
+ * Idempotent (re-asserting the squelch-enable is harmless); side-select is restored
+ * to media(0) so the SDK's media-side view is unchanged. */
+static void bcmd_sfp_datapath_up(int pid)
+{
+    uint16 rep = 0, lsd = 0, lblk = 0, lpmd = 0, cmode = 0, pma7 = 0;
+    uint16 ssd = 0, sblk = 0, sq = 0;
+    soc_miimc45_write(BCMD_UNIT, (uint16)pid, 1, X84_AER_ADDR, 0);   /* lane 0 */
+    /* --- LINE (media/optic) side --- */
+    soc_miimc45_write(BCMD_UNIT, (uint16)pid, 1, X84_SIDE_SEL, 0);
+    soc_miimc45_read(BCMD_UNIT, (uint16)pid, 1, 0x000a, &lsd);       /* signal-detect */
+    soc_miimc45_read(BCMD_UNIT, (uint16)pid, 3, 0x0020, &lblk);      /* BASE-R block lock */
+    soc_miimc45_read(BCMD_UNIT, (uint16)pid, 1, 0x0001, &lpmd);      /* PMD status1 */
+    soc_miimc45_read(BCMD_UNIT, (uint16)pid, 1, X84_CHIP_MODE, &cmode);
+    soc_miimc45_read(BCMD_UNIT, (uint16)pid, 1, 0x0007, &pma7);      /* PMA type ctrl2 */
+    soc_miimc45_read(BCMD_UNIT, (uint16)pid, 1, X84_REPEATER_DET, &rep);
+    soc_miimc45_write(BCMD_UNIT, (uint16)pid, 1, X84_RESET_CTRL, 0); /* (0b) enable media PCS */
+    /* --- SYSTEM (Warpcore-facing/XFI) side --- */
+    soc_miimc45_write(BCMD_UNIT, (uint16)pid, 1, X84_SIDE_SEL, 1);
+    soc_miimc45_read(BCMD_UNIT, (uint16)pid, 1, 0x000a, &ssd);
+    soc_miimc45_read(BCMD_UNIT, (uint16)pid, 3, 0x0020, &sblk);
+    soc_miimc45_read(BCMD_UNIT, (uint16)pid, 3, X84_SQUELCH_CTL, &sq);
+    soc_miimc45_write(BCMD_UNIT, (uint16)pid, 3, X84_SQUELCH_CTL,    /* un-squelch sys datapath */
+                      (uint16)(sq | (1u << 4) | (1u << 6)));
+    soc_miimc45_write(BCMD_UNIT, (uint16)pid, 1, X84_SIDE_SEL, 0);   /* rest at media */
+    printf("[bcmd] SFP+ 0x%02x LINE: sd=%04x blk=%04x pmd=%04x cmode=%04x pma7=%04x rep=%04x | "
+           "SYS: sd=%04x blk=%04x sq=%04x->%04x\n",
+           pid, lsd, lblk, lpmd, cmode, pma7, rep, ssd, sblk, sq, (uint16)(sq|(1u<<4)|(1u<<6)));
+}
+
+/* Force the 84758 to RE-ACQUIRE its media RX (line->system datapath). Ported from
+ * edged sfp_edc_reacquire: the 84758 uC starts media-RX acquisition only on a
+ * LOS->present EDGE, but bcmd holds RXLOS_LVL "signal present" statically, so the uC
+ * never re-runs acquisition with the right EDC (equalizer) mode -> the media side
+ * block-locks but never forwards clean frames to the system side (our RX=0 with TX
+ * fine + far side actively sending). Sequence: drop the RX_LOS/MOD_ABS overrides,
+ * induce a fake LOS (flip c800 b9), set EDC mode = SR/LR (0x44), remove the LOS,
+ * restore the overrides -> the uC re-acquires the media RX. Per SFP+ phy. */
+static void bcmd_sfp_edc_reacquire(int pid)
+{
+    uint16 v = 0, c800 = 0;
+    soc_miimc45_write(BCMD_UNIT, (uint16)pid, 1, X84_AER_ADDR, 0);   /* lane 0 */
+    soc_miimc45_read(BCMD_UNIT, (uint16)pid, 1, X84_OPT_CFG, &v);    /* drop overrides */
+    soc_miimc45_write(BCMD_UNIT, (uint16)pid, 1, X84_OPT_CFG,
+                      (uint16)(v & ~(X84_RXLOS_OVERRIDE | X84_MODABS_OVERRIDE)));
+    soc_miimc45_read(BCMD_UNIT, (uint16)pid, 1, X84_OPT_SIGLVL, &c800);   /* induce LOS */
+    soc_miimc45_write(BCMD_UNIT, (uint16)pid, 1, X84_OPT_SIGLVL,
+                      (uint16)((c800 & ~X84_RXLOS_LVL_B9) | ((~c800) & X84_RXLOS_LVL_B9)));
+    usleep(5000);
+    soc_miimc45_read(BCMD_UNIT, (uint16)pid, 1, X84_EDC_MODE, &v);   /* EDC = SR/LR */
+    soc_miimc45_write(BCMD_UNIT, (uint16)pid, 1, X84_EDC_MODE,
+                      (uint16)((v & ~X84_EDC_MASK) | X84_EDC_SR_LR));
+    usleep(5000);
+    soc_miimc45_read(BCMD_UNIT, (uint16)pid, 1, X84_OPT_SIGLVL, &v); /* remove LOS */
+    soc_miimc45_write(BCMD_UNIT, (uint16)pid, 1, X84_OPT_SIGLVL,
+                      (uint16)((v & ~X84_RXLOS_LVL_B9) | (c800 & X84_RXLOS_LVL_B9)));
+    soc_miimc45_read(BCMD_UNIT, (uint16)pid, 1, X84_OPT_CFG, &v);    /* restore overrides */
+    soc_miimc45_write(BCMD_UNIT, (uint16)pid, 1, X84_OPT_CFG,
+                      (uint16)(v | X84_RXLOS_OVERRIDE | X84_MODABS_OVERRIDE));
+    printf("[bcmd] SFP+ phy 0x%02x EDC media-RX re-acquire (EDC mode -> 0x44 SR/LR)\n", pid);
+}
+
 static void bcmd_sfp_laser_all(void)
 {
     int p;
     bcmd_sfp_scan();
     for (p = 0; p < 4; p++) bcmd_sfp_laser_one(0x40 + p);   /* xe0-3 = phy_id 0x40-0x43 */
+    for (p = 0; p < 4; p++) bcmd_sfp_datapath_up(0x40 + p); /* un-squelch repeater datapath */
 }
 
 /* Log MAC link state + negotiated speed + chip RX/TX packet counters + the
@@ -570,6 +686,31 @@ static bcm_if_t bcmd_nh_find(int port, bcm_ip_t ip)
     return -1;
 }
 
+/* Remove a cache entry (port,ip) and return its egress id, or -1 if absent.
+ * Invalidates in place (port=-99 never matches) so the slot can be reused. */
+static bcm_if_t bcmd_nh_take(int port, bcm_ip_t ip)
+{
+    int i;
+    for (i = 0; i < bcmd_nnh; i++)
+        if (bcmd_nh[i].port == port && bcmd_nh[i].ip == ip) {
+            bcm_if_t e = bcmd_nh[i].egr;
+            bcmd_nh[i].port = -99; bcmd_nh[i].ip = 0;
+            return e;
+        }
+    return -1;
+}
+
+/* A cache slot to write: reuse an invalidated one (bounded under churn), else
+ * extend the array; -1 if full. */
+static int bcmd_nh_slot(void)
+{
+    int i;
+    for (i = 0; i < bcmd_nnh; i++)
+        if (bcmd_nh[i].port == -99) return i;
+    if (bcmd_nnh < (int)(sizeof(bcmd_nh)/sizeof(bcmd_nh[0]))) return bcmd_nnh++;
+    return -1;
+}
+
 /* Ensure the router MAC (BCMD_HOST_MAC) is in the MY_STATION TCAM so the chip
  * L3-routes (not just L2-switches) frames addressed to us. Added once. */
 static void bcmd_l3_mystation(void)
@@ -625,10 +766,8 @@ static void bcmd_l3_local_ip(bcm_ip_t ip)
     host.l3a_flags   = BCM_L3_L2TOCPU;
     host.l3a_intf    = 0;
     if (bcm_l3_host_add(BCMD_UNIT, &host) != BCM_E_NONE) return;
-    if (bcmd_nnh < (int)(sizeof(bcmd_nh)/sizeof(bcmd_nh[0]))) {
-        bcmd_nh[bcmd_nnh].port = -1; bcmd_nh[bcmd_nnh].ip = ip;
-        bcmd_nh[bcmd_nnh].egr = 0; bcmd_nnh++;
-    }
+    { int s = bcmd_nh_slot();
+      if (s >= 0) { bcmd_nh[s].port = -1; bcmd_nh[s].ip = ip; bcmd_nh[s].egr = 0; } }
     printf("[bcmd] L3: local %u.%u.%u.%u -> CPU (HW punt)\n",
            (ip>>24)&0xff,(ip>>16)&0xff,(ip>>8)&0xff,ip&0xff);
 }
@@ -641,12 +780,12 @@ static void bcmd_l3_neigh_add(int port, bcm_ip_t ip, const unsigned char *mac)
     bcm_if_t intf, eid = 0;
     int i, rv;
     if (bcmd_nh_find(port, ip) >= 0) return;   /* already programmed (re-dump) */
-    intf = bcmd_l3_intf_ensure(port, BCMD_VLAN);
+    intf = bcmd_l3_intf_ensure(port, bcmd_vlan_for_port(port));
     if (intf < 0) { printf("[bcmd] L3: neigh %u.%u.%u.%u port %d: intf_ensure failed\n",
                         (ip>>24)&0xff,(ip>>16)&0xff,(ip>>8)&0xff,ip&0xff, port); return; }
     bcm_l3_egress_t_init(&egr);
     egr.intf = intf;
-    egr.vlan = BCMD_VLAN;
+    egr.vlan = bcmd_vlan_for_port(port);
     egr.port = port;
     for (i = 0; i < 6; i++) egr.mac_addr[i] = mac[i];
     rv = bcm_l3_egress_create(BCMD_UNIT, 0, &egr, &eid);
@@ -662,10 +801,8 @@ static void bcmd_l3_neigh_add(int port, bcm_ip_t ip, const unsigned char *mac)
     if (rv != BCM_E_NONE)
         printf("[bcmd] L3: host_add %u.%u.%u.%u rv=%d (egr %d still cached)\n",
                (ip>>24)&0xff,(ip>>16)&0xff,(ip>>8)&0xff,ip&0xff, rv, eid);
-    if (bcmd_nnh < (int)(sizeof(bcmd_nh)/sizeof(bcmd_nh[0]))) {
-        bcmd_nh[bcmd_nnh].port = port; bcmd_nh[bcmd_nnh].ip = ip;
-        bcmd_nh[bcmd_nnh].egr = eid; bcmd_nnh++;
-    }
+    { int s = bcmd_nh_slot();
+      if (s >= 0) { bcmd_nh[s].port = port; bcmd_nh[s].ip = ip; bcmd_nh[s].egr = eid; } }
     printf("[bcmd] L3: host %u.%u.%u.%u -> egr %d port %d (HW)\n",
            (ip>>24)&0xff,(ip>>16)&0xff,(ip>>8)&0xff,ip&0xff, eid, port);
 }
@@ -685,6 +822,48 @@ static void bcmd_l3_route_add(bcm_ip_t prefix, int len, bcm_ip_t gw, int oif_por
     if (bcm_l3_route_add(BCMD_UNIT, &rt) == BCM_E_NONE)
         printf("[bcmd] L3: route %u.%u.%u.%u/%d -> egr %d (HW)\n",
                (prefix>>24)&0xff,(prefix>>16)&0xff,(prefix>>8)&0xff,prefix&0xff, len, eid);
+}
+
+/* ------ delete path: keep the chip L3 tables a true mirror of the kernel FIB ---- */
+
+/* RTM_DELADDR (switch's own IP removed): drop the /32 CPU-punt host. */
+static void bcmd_l3_local_ip_del(bcm_ip_t ip)
+{
+    bcm_l3_host_t host;
+    if (bcmd_nh_take(-1, ip) < 0) return;      /* not one of ours */
+    bcm_l3_host_t_init(&host);
+    host.l3a_ip_addr = ip;
+    host.l3a_flags   = BCM_L3_L2TOCPU;
+    (void)bcm_l3_host_delete(BCMD_UNIT, &host);
+    printf("[bcmd] L3: del local %u.%u.%u.%u\n",
+           (ip>>24)&0xff,(ip>>16)&0xff,(ip>>8)&0xff,ip&0xff);
+}
+
+/* RTM_DELNEIGH (neighbor removed): drop the /32 host + free the egress object. */
+static void bcmd_l3_neigh_del(int port, bcm_ip_t ip)
+{
+    bcm_l3_host_t host;
+    bcm_if_t eid = bcmd_nh_take(port, ip);
+    if (eid < 0) return;                       /* not programmed / already gone */
+    bcm_l3_host_t_init(&host);
+    host.l3a_ip_addr = ip;
+    (void)bcm_l3_host_delete(BCMD_UNIT, &host);
+    (void)bcm_l3_egress_destroy(BCMD_UNIT, eid);   /* best-effort (a route may pin it) */
+    printf("[bcmd] L3: del host %u.%u.%u.%u (egr %d) port %d\n",
+           (ip>>24)&0xff,(ip>>16)&0xff,(ip>>8)&0xff,ip&0xff, eid, port);
+}
+
+/* RTM_DELROUTE (gateway route removed): drop the L3 route entry. */
+static void bcmd_l3_route_del(bcm_ip_t prefix, int len, bcm_ip_t gw)
+{
+    bcm_l3_route_t rt;
+    if (gw == 0) return;                       /* connected route: not programmed */
+    bcm_l3_route_t_init(&rt);
+    rt.l3a_subnet  = prefix;
+    rt.l3a_ip_mask = len ? (bcm_ip_t)(~0u << (32 - len)) : 0;
+    if (bcm_l3_route_delete(BCMD_UNIT, &rt) == BCM_E_NONE)
+        printf("[bcmd] L3: del route %u.%u.%u.%u/%d\n",
+               (prefix>>24)&0xff,(prefix>>16)&0xff,(prefix>>8)&0xff,prefix&0xff, len);
 }
 
 /* Set a netdev admin-UP via ioctl, so its admin state matches the chip-enabled
@@ -767,35 +946,46 @@ static void bcmd_nl_handle(struct nlmsghdr *nh)
                    SOC_PORT_NAME(BCMD_UNIT, port), port, want ? "UP" : "DOWN");
         }
 
-    } else if (nh->nlmsg_type == RTM_NEWADDR) {
+    } else if (nh->nlmsg_type == RTM_NEWADDR || nh->nlmsg_type == RTM_DELADDR) {
         struct ifaddrmsg *ifa = (struct ifaddrmsg *)NLMSG_DATA(nh);
         int port = bcmd_port_for_ifindex(ifa->ifa_index), alen;
         struct rtattr *local;
+        bcm_ip_t ip;
         if (port < 0 || ifa->ifa_family != AF_INET) return;
-        (void)bcmd_l3_intf_ensure(port, BCMD_VLAN);   /* switch IP -> L3 intf */
         alen = (int)(nh->nlmsg_len - NLMSG_LENGTH(sizeof(*ifa)));
         local = bcmd_rta((struct rtattr *)IFA_RTA(ifa), alen, IFA_LOCAL);
         if (!local)
             local = bcmd_rta((struct rtattr *)IFA_RTA(ifa), alen, IFA_ADDRESS);
-        if (local)
-            bcmd_l3_local_ip(ntohl(*(unsigned int *)RTA_DATA(local)));
+        if (!local) return;
+        ip = ntohl(*(unsigned int *)RTA_DATA(local));
+        if (nh->nlmsg_type == RTM_NEWADDR) {
+            (void)bcmd_l3_intf_ensure(port, bcmd_vlan_for_port(port));  /* switch IP -> L3 intf */
+            bcmd_l3_local_ip(ip);
+        } else {
+            bcmd_l3_local_ip_del(ip);                  /* leave the L3 intf in place */
+        }
 
-    } else if (nh->nlmsg_type == RTM_NEWNEIGH) {
+    } else if (nh->nlmsg_type == RTM_NEWNEIGH || nh->nlmsg_type == RTM_DELNEIGH) {
         struct ndmsg *nd = (struct ndmsg *)NLMSG_DATA(nh);
         struct rtattr *dst, *lla;
         int port = bcmd_port_for_ifindex(nd->ndm_ifindex);
         if (port < 0 || nd->ndm_family != AF_INET) return;
-        if (!(nd->ndm_state & (NUD_REACHABLE|NUD_PERMANENT|NUD_STALE|NUD_DELAY|NUD_PROBE)))
-            return;                                    /* skip FAILED/INCOMPLETE */
         dst = bcmd_rta((struct rtattr *)((char *)nd + NLMSG_ALIGN(sizeof(*nd))),
                        (int)(nh->nlmsg_len - NLMSG_LENGTH(sizeof(*nd))), NDA_DST);
         lla = bcmd_rta((struct rtattr *)((char *)nd + NLMSG_ALIGN(sizeof(*nd))),
                        (int)(nh->nlmsg_len - NLMSG_LENGTH(sizeof(*nd))), NDA_LLADDR);
-        if (dst && lla)
-            bcmd_l3_neigh_add(port, ntohl(*(unsigned int *)RTA_DATA(dst)),
-                              (unsigned char *)RTA_DATA(lla));
+        if (!dst) return;
+        if (nh->nlmsg_type == RTM_NEWNEIGH) {
+            if (!(nd->ndm_state & (NUD_REACHABLE|NUD_PERMANENT|NUD_STALE|NUD_DELAY|NUD_PROBE)))
+                return;                                /* skip FAILED/INCOMPLETE */
+            if (lla)
+                bcmd_l3_neigh_add(port, ntohl(*(unsigned int *)RTA_DATA(dst)),
+                                  (unsigned char *)RTA_DATA(lla));
+        } else {
+            bcmd_l3_neigh_del(port, ntohl(*(unsigned int *)RTA_DATA(dst)));
+        }
 
-    } else if (nh->nlmsg_type == RTM_NEWROUTE) {
+    } else if (nh->nlmsg_type == RTM_NEWROUTE || nh->nlmsg_type == RTM_DELROUTE) {
         struct rtmsg *rtm = (struct rtmsg *)NLMSG_DATA(nh);
         struct rtattr *dst, *gw, *oif;
         int alen, port;
@@ -806,11 +996,16 @@ static void bcmd_nl_handle(struct nlmsghdr *nh)
         dst = bcmd_rta((struct rtattr *)((char *)rtm + NLMSG_ALIGN(sizeof(*rtm))), alen, RTA_DST);
         gw  = bcmd_rta((struct rtattr *)((char *)rtm + NLMSG_ALIGN(sizeof(*rtm))), alen, RTA_GATEWAY);
         oif = bcmd_rta((struct rtattr *)((char *)rtm + NLMSG_ALIGN(sizeof(*rtm))), alen, RTA_OIF);
-        if (!gw || !oif) return;                       /* only gateway routes */
+        if (!gw) return;                               /* only gateway routes */
         if (dst) pfx = ntohl(*(unsigned int *)RTA_DATA(dst));
         gwip = ntohl(*(unsigned int *)RTA_DATA(gw));
-        port = bcmd_port_for_ifindex(*(int *)RTA_DATA(oif));
-        if (port >= 0) bcmd_l3_route_add(pfx, rtm->rtm_dst_len, gwip, port);
+        if (nh->nlmsg_type == RTM_NEWROUTE) {
+            if (!oif) return;
+            port = bcmd_port_for_ifindex(*(int *)RTA_DATA(oif));
+            if (port >= 0) bcmd_l3_route_add(pfx, rtm->rtm_dst_len, gwip, port);
+        } else {
+            bcmd_l3_route_del(pfx, rtm->rtm_dst_len, gwip);
+        }
     }
 }
 
@@ -847,6 +1042,34 @@ static void bcmd_nl_drain(int fd)
     }
 }
 
+/* SFP+ diag: dump the xe0-3 MAC counters so we can localize where frames die on
+ * the 10G path — In-NUcast (broadcast, e.g. inbound ARP) climbing means frames
+ * DO reach the MAC (so it's punt/forwarding past the MAC); 0 means nothing
+ * crosses the 84758 line->system datapath. InErrors/FCS climbing = corrupted
+ * frames (serdes/BER). Out counters confirm our own TX leaves the MAC. */
+static void bcmd_xe_counters(void)
+{
+    int port;
+    uint64 inu, innu, inerr, infcs, outu, outnu;
+    for (port = 50; port <= 53; port++) {
+        int link = 0;
+        if (bcm_port_link_status_get(BCMD_UNIT, port, &link) != BCM_E_NONE ||
+            link != BCM_PORT_LINK_STATUS_UP) continue;
+        COMPILER_64_ZERO(inu);  COMPILER_64_ZERO(innu);  COMPILER_64_ZERO(inerr);
+        COMPILER_64_ZERO(infcs); COMPILER_64_ZERO(outu); COMPILER_64_ZERO(outnu);
+        (void)bcm_stat_get(BCMD_UNIT, port, snmpIfInUcastPkts,      &inu);
+        (void)bcm_stat_get(BCMD_UNIT, port, snmpIfInNUcastPkts,     &innu);
+        (void)bcm_stat_get(BCMD_UNIT, port, snmpIfInErrors,         &inerr);
+        (void)bcm_stat_get(BCMD_UNIT, port, snmpDot3StatsFCSErrors, &infcs);
+        (void)bcm_stat_get(BCMD_UNIT, port, snmpIfOutUcastPkts,     &outu);
+        (void)bcm_stat_get(BCMD_UNIT, port, snmpIfOutNUcastPkts,    &outnu);
+        printf("[bcmd] %s cnt: inUcast=%u inBcast/Mcast=%u inErr=%u fcsErr=%u | outUcast=%u outBcast/Mcast=%u\n",
+               SOC_PORT_NAME(BCMD_UNIT, port),
+               COMPILER_64_LO(inu), COMPILER_64_LO(innu), COMPILER_64_LO(inerr),
+               COMPILER_64_LO(infcs), COMPILER_64_LO(outu), COMPILER_64_LO(outnu));
+    }
+}
+
 /* ------------------------------------------------------------------- entry */
 /* Called from socdiag's main() in place of diag_shell(). SAL/kcom/chip_info
  * config + config.bcm have already been done by main(). */
@@ -875,7 +1098,7 @@ static void bcmd_link_summary(void)
 int bcmd_run(void)
 {
     static int netif_ids[BCMD_MAXPORT + 1];
-    int tick = 0, port, n = 0, nlfd = -1;
+    int tick = 0, port, n = 0, nlfd = -1, edc_done = 0;
 
     setvbuf(stdout, NULL, _IONBF, 0);   /* unbuffered: see logs live in /tmp/bcmd.log */
     printf("[bcmd] EdgeNOS-4610 datapath daemon starting\n");
@@ -933,9 +1156,20 @@ int bcmd_run(void)
             bcmd_nl_dump(nlfd, RTM_GETNEIGH);
             bcmd_nl_dump(nlfd, RTM_GETROUTE);
         }
-        if ((++tick % 5) == 0) bcmd_link_summary();   /* ~every 10s */
-        /* TODO next: RTM_NEWADDR/NEWNEIGH/NEWROUTE -> chip L3 (intf/host/route)
-         * so `ip route`/`bridge`/FRR program hardware forwarding. */
+        if ((++tick % 5) == 0) { bcmd_link_summary(); bcmd_xe_counters(); }  /* ~10s */
+        /* One-shot 84758 media-RX re-acquire once the link has settled (~16s) and
+         * the optic signal is present, so the LOS-toggle actually triggers the uC. */
+        if (!edc_done && tick == 8) {
+            int p, any = 0;
+            for (p = 50; p <= 53; p++) {
+                int lk = 0;
+                if (bcm_port_link_status_get(BCMD_UNIT, p, &lk) == BCM_E_NONE &&
+                    lk == BCM_PORT_LINK_STATUS_UP) { bcmd_sfp_edc_reacquire(0x40 + (p - 50)); any = 1; }
+            }
+            if (any) edc_done = 1;
+        }
+        /* L3 FIB sync (add + del) is live: RTM_{NEW,DEL}{ADDR,NEIGH,ROUTE} ->
+         * chip intf/host/route, so `ip route`/FRR program + withdraw HW forwarding. */
     }
 
     printf("[bcmd] shutting down\n");
