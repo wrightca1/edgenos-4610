@@ -837,6 +837,81 @@ static void bcmd_l3_route_add(bcm_ip_t prefix, int len, bcm_ip_t gw, int oif_por
                (prefix>>24)&0xff,(prefix>>16)&0xff,(prefix>>8)&0xff,prefix&0xff, len, eid);
 }
 
+/* A single shared "glean" egress that traps to the CPU. Connected-subnet routes
+ * point here so the FIRST packet to an as-yet-unresolved local host is sent to the
+ * CPU, Linux ARPs it (-> RTM_NEWNEIGH -> a /32 host entry that longest-prefix wins),
+ * and subsequent packets forward in hardware. Without it the chip has no entry for
+ * un-ARP'd hosts on our directly-connected subnets and drops transit to them. */
+static struct rtattr *bcmd_rta(struct rtattr *rta, int len, int type);  /* fwd (defined in netlink section) */
+
+static bcm_if_t bcmd_glean_eid = -1;
+static bcm_if_t bcmd_l3_glean_ensure(void)
+{
+    bcm_l3_egress_t egr;
+    bcm_if_t eid = 0;
+    if (bcmd_glean_eid >= 0) return bcmd_glean_eid;
+    bcm_l3_egress_t_init(&egr);
+    egr.flags = BCM_L3_L2TOCPU;          /* unresolved dest -> CPU (ARP trigger) */
+    if (bcm_l3_egress_create(BCMD_UNIT, 0, &egr, &eid) != BCM_E_NONE) return -1;
+    bcmd_glean_eid = eid;
+    printf("[bcmd] L3: glean egress %d (connected-subnet ARP trap)\n", eid);
+    return eid;
+}
+
+/* RTM_NEWROUTE, directly-connected subnet (no gateway, scope link): program the
+ * subnet -> glean so unresolved local hosts get ARP'd then HW-forwarded. */
+static void bcmd_l3_connected_add(bcm_ip_t prefix, int len, int oif_port)
+{
+    bcm_l3_route_t rt;
+    bcm_if_t glean;
+    if (len <= 0 || len >= 32) return;       /* subnets only (not /32 host routes) */
+    glean = bcmd_l3_glean_ensure();
+    if (glean < 0) return;
+    (void)bcmd_l3_intf_ensure(oif_port, bcmd_vlan_for_port(oif_port));  /* intf + MY_STATION */
+    bcm_l3_route_t_init(&rt);
+    rt.l3a_subnet  = prefix;
+    rt.l3a_ip_mask = (bcm_ip_t)(~0u << (32 - len));
+    rt.l3a_intf    = glean;
+    if (bcm_l3_route_add(BCMD_UNIT, &rt) == BCM_E_NONE)
+        printf("[bcmd] L3: connected %u.%u.%u.%u/%d -> glean (HW)\n",
+               (prefix>>24)&0xff,(prefix>>16)&0xff,(prefix>>8)&0xff,prefix&0xff, len);
+}
+
+/* RTM_NEWROUTE with RTA_MULTIPATH: build an ECMP group across the resolved
+ * next-hops and point the route at it (BCM_L3_MULTIPATH) so the chip hashes flows
+ * across the paths. mp = the RTA_MULTIPATH attribute, mplen = its payload length. */
+static void bcmd_l3_route_add_ecmp(bcm_ip_t prefix, int len, struct rtattr *mp, int mplen)
+{
+    bcm_if_t intfs[16];
+    int n = 0;
+    bcm_l3_egress_ecmp_t ecmp;
+    bcm_l3_route_t rt;
+    struct rtnexthop *rtnh = (struct rtnexthop *)RTA_DATA(mp);
+    int rem = mplen;
+    while (RTNH_OK(rtnh, rem) && n < 16) {
+        struct rtattr *gwa = bcmd_rta(RTNH_DATA(rtnh),
+                                      (int)(rtnh->rtnh_len - sizeof(*rtnh)), RTA_GATEWAY);
+        int port = bcmd_port_for_ifindex(rtnh->rtnh_ifindex);
+        if (gwa && port >= 0) {
+            bcm_if_t e = bcmd_nh_find(port, ntohl(*(unsigned int *)RTA_DATA(gwa)));
+            if (e >= 0) intfs[n++] = e;
+        }
+        rtnh = RTNH_NEXT(rtnh);
+    }
+    if (n < 2) return;                       /* <2 resolved paths: defer to re-dump */
+    bcm_l3_egress_ecmp_t_init(&ecmp);
+    ecmp.max_paths = n;
+    if (bcm_l3_egress_ecmp_create(BCMD_UNIT, &ecmp, n, intfs) != BCM_E_NONE) return;
+    bcm_l3_route_t_init(&rt);
+    rt.l3a_subnet  = prefix;
+    rt.l3a_ip_mask = len ? (bcm_ip_t)(~0u << (32 - len)) : 0;
+    rt.l3a_intf    = ecmp.ecmp_intf;
+    rt.l3a_flags   = BCM_L3_MULTIPATH;
+    if (bcm_l3_route_add(BCMD_UNIT, &rt) == BCM_E_NONE)
+        printf("[bcmd] L3: route %u.%u.%u.%u/%d -> ECMP %d paths (HW)\n",
+               (prefix>>24)&0xff,(prefix>>16)&0xff,(prefix>>8)&0xff,prefix&0xff, len, n);
+}
+
 /* ------ delete path: keep the chip L3 tables a true mirror of the kernel FIB ---- */
 
 /* RTM_DELADDR (switch's own IP removed): drop the /32 CPU-punt host. */
@@ -866,11 +941,13 @@ static void bcmd_l3_neigh_del(int port, bcm_ip_t ip)
            (ip>>24)&0xff,(ip>>16)&0xff,(ip>>8)&0xff,ip&0xff, eid, port);
 }
 
-/* RTM_DELROUTE (gateway route removed): drop the L3 route entry. */
-static void bcmd_l3_route_del(bcm_ip_t prefix, int len, bcm_ip_t gw)
+/* RTM_DELROUTE (route removed): drop the L3 route entry. Deletes by prefix/mask,
+ * so it withdraws gateway, connected-glean, and ECMP routes alike. (The shared
+ * glean egress is left in place for other connected subnets; per-route ECMP
+ * groups are a minor leak across churn — acceptable, like the neigh egress.) */
+static void bcmd_l3_route_del(bcm_ip_t prefix, int len)
 {
     bcm_l3_route_t rt;
-    if (gw == 0) return;                       /* connected route: not programmed */
     bcm_l3_route_t_init(&rt);
     rt.l3a_subnet  = prefix;
     rt.l3a_ip_mask = len ? (bcm_ip_t)(~0u << (32 - len)) : 0;
@@ -1000,24 +1077,29 @@ static void bcmd_nl_handle(struct nlmsghdr *nh)
 
     } else if (nh->nlmsg_type == RTM_NEWROUTE || nh->nlmsg_type == RTM_DELROUTE) {
         struct rtmsg *rtm = (struct rtmsg *)NLMSG_DATA(nh);
-        struct rtattr *dst, *gw, *oif;
-        int alen, port;
-        bcm_ip_t pfx = 0, gwip = 0;
+        struct rtattr *base, *dst, *gw, *oif, *mp;
+        int alen, port, len = rtm->rtm_dst_len;
+        bcm_ip_t pfx = 0;
         if (rtm->rtm_family != AF_INET) return;
         if (rtm->rtm_table != RT_TABLE_MAIN && rtm->rtm_table != 0) return;
+        if (rtm->rtm_type != RTN_UNICAST) return;      /* skip local/broadcast/etc */
+        base = (struct rtattr *)((char *)rtm + NLMSG_ALIGN(sizeof(*rtm)));
         alen = (int)(nh->nlmsg_len - NLMSG_LENGTH(sizeof(*rtm)));
-        dst = bcmd_rta((struct rtattr *)((char *)rtm + NLMSG_ALIGN(sizeof(*rtm))), alen, RTA_DST);
-        gw  = bcmd_rta((struct rtattr *)((char *)rtm + NLMSG_ALIGN(sizeof(*rtm))), alen, RTA_GATEWAY);
-        oif = bcmd_rta((struct rtattr *)((char *)rtm + NLMSG_ALIGN(sizeof(*rtm))), alen, RTA_OIF);
-        if (!gw) return;                               /* only gateway routes */
+        dst = bcmd_rta(base, alen, RTA_DST);
+        gw  = bcmd_rta(base, alen, RTA_GATEWAY);
+        oif = bcmd_rta(base, alen, RTA_OIF);
+        mp  = bcmd_rta(base, alen, RTA_MULTIPATH);
         if (dst) pfx = ntohl(*(unsigned int *)RTA_DATA(dst));
-        gwip = ntohl(*(unsigned int *)RTA_DATA(gw));
-        if (nh->nlmsg_type == RTM_NEWROUTE) {
-            if (!oif) return;
+        if (nh->nlmsg_type == RTM_DELROUTE) { bcmd_l3_route_del(pfx, len); return; }
+        /* NEWROUTE: ECMP (multipath) > single-gateway > directly-connected glean */
+        if (mp) {
+            bcmd_l3_route_add_ecmp(pfx, len, mp, (int)RTA_PAYLOAD(mp));
+        } else if (gw && oif) {
             port = bcmd_port_for_ifindex(*(int *)RTA_DATA(oif));
-            if (port >= 0) bcmd_l3_route_add(pfx, rtm->rtm_dst_len, gwip, port);
-        } else {
-            bcmd_l3_route_del(pfx, rtm->rtm_dst_len, gwip);
+            if (port >= 0) bcmd_l3_route_add(pfx, len, ntohl(*(unsigned int *)RTA_DATA(gw)), port);
+        } else if (!gw && oif && len < 32) {           /* connected subnet -> glean */
+            port = bcmd_port_for_ifindex(*(int *)RTA_DATA(oif));
+            if (port >= 0) bcmd_l3_connected_add(pfx, len, port);
         }
     }
 }
