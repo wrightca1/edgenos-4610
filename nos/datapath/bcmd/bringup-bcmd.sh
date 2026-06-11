@@ -28,7 +28,10 @@ load() { mod="$1"; shift; lsmod | grep -q "^$(basename "$mod" .ko | tr - _)" || 
 echo "[bringup] loading BDE + KNET modules"
 load linux-kernel-bde.ko dmasize=8M
 load linux-user-bde.ko
-load linux-bcm-knet.ko
+# default_mtu 1600: the far-side network runs MTU 1600 (OSPF DBD MTU must match or
+# the peer stays stuck in ExStart). KNET sets netdev mtu at creation from this; the
+# chip frame-max is raised to jumbo in bcmd so 1600-byte data also forwards.
+load linux-bcm-knet.ko default_mtu=1600
 
 # --- 3. devnodes (dynamic majors) ---
 mknode() {

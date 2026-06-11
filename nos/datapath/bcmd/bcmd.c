@@ -183,7 +183,12 @@ static int bcmd_port_up(bcm_port_t port)
      * that backpressured the upstream trunk. */
     BCMD_CHK(bcm_port_pause_set(BCMD_UNIT, port, /*tx*/0, /*rx*/0));
 
-    printf("[bcmd] port %d up (linkscan SW, pause off)\n", port);
+    /* Raise the chip max frame size to jumbo so the KNET netdev allows MTU > 1500
+     * (the KNET driver caps netdev max_mtu at the chip frame-max; default 1500
+     * blocked `ip link set xeN mtu 1600` for a 1600-MTU OSPF peer). */
+    (void)bcm_port_frame_max_set(BCMD_UNIT, port, 9216);
+
+    printf("[bcmd] port %d up (linkscan SW, pause off, frame_max 9216)\n", port);
     return 0;
 }
 
@@ -724,6 +729,14 @@ static void bcmd_l3_mystation(void)
     rv = bcm_switch_control_set(BCMD_UNIT, bcmSwitchL3EgressMode, 1);
     if (rv != BCM_E_NONE)
         printf("[bcmd] L3: bcmSwitchL3EgressMode set rv=%d\n", rv);
+    /* Trap L3 unicast TTL=1 packets to the CPU. Control-plane protocols addressed
+     * to us (OSPF/RIP DBD, etc.) ride IP TTL=1; once MY_STATION forces them into the
+     * L3 route path, the chip decrements TTL 1->0 and DROPS them as TTL-expired
+     * BEFORE the local-IP L2TOCPU punt — so OSPF unicast DBD never reaches the CPU
+     * (ICMP works because TTL=64). This makes the chip punt them instead of drop. */
+    rv = bcm_switch_control_set(BCMD_UNIT, bcmSwitchL3UcastTtl1ToCpu, 1);
+    if (rv != BCM_E_NONE)
+        printf("[bcmd] L3: bcmSwitchL3UcastTtl1ToCpu set rv=%d\n", rv);
     bcm_l2_station_t_init(&st);
     for (i = 0; i < 6; i++) { st.dst_mac[i] = BCMD_HOST_MAC[i]; st.dst_mac_mask[i] = 0xff; }
     st.vlan = 0; st.vlan_mask = 0;            /* any VLAN */
