@@ -28,13 +28,22 @@ major versions — a multi-week project. So we go incrementally:
   both ports. Then built our **own** Buildroot rootfs (glibc+systemd, hostname `edgenos-4610`) — not
   the ONL base. Reproducible builders: `../build-510-fit.sh`, `../build-ownbuild-swi.sh` (rebuilds
   ko510 in lockstep), `../build-510-installer.sh`. **Full writeup: `../../docs/KERNEL_510_OWNBUILD.md`.**
-- **Step 3 — 5.10 → 5.15 LTS (matches the 5610/newnos). ✅ BUILD DONE (2026-06-13).** The disciplined
+- **Step 3 — 5.10 → 5.15 LTS (matches the 5610/newnos). ✅ DONE + PROVEN ON HW (2026-06-13).** The disciplined
   rung: `brcm-iproc-5.10.patch` re-floated onto pristine 5.15.209 with only 6 failed hunks; total 7
   small deltas (5 Makefile/Kconfig integration + 1 BSP C `ehci-platform.c reserved4[6]`→`brcm_insnreg01`
   + 1 SDK C `ksal.c SCHED_YIELD`/`MAX_USER_RT_PRIO`). Canonical `patches/brcm-iproc-5.15.patch`
   (0 rejects on pristine) + `../datapath/sdk-6.5.16-linux5.15-compat.patch` (superset of the 5.10
   one — `ksal` fix is back-compatible). Kernel `Image` + all modules + the BDE/KNET trio build clean,
-  vermagic `5.15.209-OpenNetworkLinux-armhf`; **SDK frozen → `bcmd` unchanged.** HW boot test pending.
+  vermagic `5.15.209-OpenNetworkLinux-armhf`; **SDK frozen → `bcmd` unchanged.**
+  **HW-validated:** booted the 5.15 FIT from the A/B test slot (`boot_slot=B`; 5.10 left in slot A as
+  the fallback) — 5.15.209 boots clean to login (no panic/oops), `ko515` load, CMIC `type 20000180`,
+  `bcmd` active, **copper `ge25` ping 10.14.1.254 = 0% loss.** (SFP+ `xe0` was peer-gated: far-side
+  router rebooting, our carrier up — not a kernel issue.) Slot deploy done entirely from the live OS:
+  write the FIT to the inactive `sda1` test slot + `fw_setenv boot_slot B` (OS `fw_setenv` persists;
+  the in-`bootcmd` `saveenv` is the unreliable one). **No ONIE needed** for slot updates — ONIE is
+  only for full `onie-nos-install` or unbootable recovery. Build scripts: `../build-515-fit.sh`,
+  `../datapath/build-bde-515.sh`. Still to do for a deployable 5.15 NOS: a 5.15 own-build SWI
+  (`ko515` baked) + installer, mirroring the 5.10 ones.
 - **Step 4+ — 5.15 → newer LTS** when needed (same re-float method; 6.x is a bigger delta —
   `class_create` owner-drop @6.4, mm folios @5.16+).
 
