@@ -28019,3 +28019,145 @@ diff -uprN -X /tmp/pristine515/linux-5.15.209/Documentation/dontdiff '--exclude=
 +MODULE_LICENSE("GPL");
 Binary files a/scripts/sorttable and b/scripts/sorttable differ
 Binary files a/usr/initramfs_inc_data and b/usr/initramfs_inc_data differ
+--- a/include/linux/phy/xgs_iproc_serdes.h
++++ b/include/linux/phy/xgs_iproc_serdes.h
+@@ -0,0 +1,27 @@
++/*
++ * Copyright (C) 2017 Broadcom Corporation
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation version 2.
++ *
++ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
++ * kind, whether express or implied; without even the implied warranty
++ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ */
++
++#ifndef _XGS_IPROC_SERDES_H_
++#define _XGS_IPROC_SERDES_H_
++
++/* Specify the used lane number of SERDES */
++typedef struct xgs_serdes_info_s {
++	u32 lane;
++} xgs_serdes_info_t;
++
++extern bool xgs_serdes_hx4_amac(struct phy_device *);
++extern bool xgs_serdes_kt2_amac(struct phy_device *);
++extern void xgs_serdes_set_lane(struct phy_device *phy_dev, u32 lane);
++
++#endif /* _XGS_IPROC_SERDES_H_ */
++
+--- a/include/linux/soc/bcm/iproc-cmic.h
++++ b/include/linux/soc/bcm/iproc-cmic.h
+@@ -0,0 +1,34 @@
++#ifndef _IPROC_CMIC_H
++#define _IPROC_CMIC_H
++
++struct iproc_cmic {
++	void __iomem *base;
++	struct device *dev;
++
++	const struct sbus_ops *sbus_ops;
++};
++
++struct sbus_ops {
++	int (*init)(struct iproc_cmic *cmic);
++	int	(*reg32_write)(struct iproc_cmic *cmic, u32 block, u32 addr, u32 val);
++	u32	(*reg32_read)(struct iproc_cmic *cmic, u32 block, u32 addr);
++	int	(*reg64_write)(struct iproc_cmic *cmic, u32 block, u32 addr, u64 val);
++	u64	(*reg64_read)(struct iproc_cmic *cmic, u32 block, u32 addr);
++	int	(*ucmem_write)(struct iproc_cmic *cmic, u32 block, u32 *mem);
++	int (*ucmem_read)(struct iproc_cmic *cmic, u32 block, u32 *mem);
++};
++
++enum cmic_block_type {
++	CMIC_BLOCK_TYPE_TOP = 0,
++	CMIC_BLOCK_TYPE_APM = 1,
++};
++
++extern int iproc_cmic_schan_reg32_write(u32 blk_type, u32 addr, u32 val);
++extern u32 iproc_cmic_schan_reg32_read(u32 blk_type, u32 addr);
++extern int iproc_cmic_schan_reg64_write(u32 blk_type, u32 addr, u64 val);
++extern u64 iproc_cmic_schan_reg64_read(u32 blk_type, u32 addr);
++extern int iproc_cmic_schan_ucmem_write(u32 blk_type, u32 *mem);
++extern int iproc_cmic_schan_ucmem_read(u32 blk_type, u32 *mem);
++extern void inline __iomem *iproc_cmic_base_get(void);
++
++#endif /* _IPROC_CMIC_H */
+--- a/include/linux/soc/bcm/xgs-iproc-idm.h
++++ b/include/linux/soc/bcm/xgs-iproc-idm.h
+@@ -0,0 +1,21 @@
++/*
++ * Copyright (C) 2016 Broadcom Corporation
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation version 2.
++ *
++ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
++ * kind, whether express or implied; without even the implied warranty
++ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ */
++
++#ifndef XGS_IPROC_IDM_H
++#define XGS_IPROC_IDM_H
++
++extern void inline __iomem *get_iproc_idm_base(int idx);
++extern int xgs_iproc_idm_dmac_reset(void);
++extern int xgs_iproc_idm_init(void);
++
++#endif /* XGS_IPROC_IDM_H */
+--- a/include/linux/soc/bcm/xgs-iproc-misc-setup.h
++++ b/include/linux/soc/bcm/xgs-iproc-misc-setup.h
+@@ -0,0 +1,22 @@
++/*
++ * Copyright (C) 2016 Broadcom Corporation
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation version 2.
++ *
++ * This program is distributed "as is" WITHOUT ANY WARRANTY of any
++ * kind, whether express or implied; without even the implied warranty
++ * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ */
++
++#ifndef XGS_IPROC_MISC_SETUP_H
++#define XGS_IPROC_MISC_SETUP_H
++
++extern int xgs_iproc_misc_setup(void);
++extern void __iomem *get_iproc_wrap_ctrl_base(void);
++extern void __iomem *get_iproc_dmu_pcu_base(void);
++extern int is_wh2_amac_sgmii(void);
++
++#endif /* XGS_IPROC_MISC_SETUP_H */
+--- a/include/linux/usb/iproc_usb.h
++++ b/include/linux/usb/iproc_usb.h
+@@ -0,0 +1,23 @@
++/*
++ * Copyright 2017 Broadcom Limited
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ * GNU General Public License for more details.
++ */
++
++#ifndef __LINUX_USB_IPROC_USB_H
++#define __LINUX_USB_IPROC_USB_H
++
++/* USB Flags */
++
++#define IPROC_USB_MODE_HOST		(0)
++#define IPROC_USB_MODE_DEVICE		(1)			
++
++#endif /* __LINUX_USB_IPROC_USB_H */
++
