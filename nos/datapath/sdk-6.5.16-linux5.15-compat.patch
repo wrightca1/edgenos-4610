@@ -1,0 +1,317 @@
+--- a/systems/linux/kernel/modules/shared/gmodule.c
++++ b/systems/linux/kernel/modules/shared/gmodule.c
+@@ -143,6 +143,16 @@
+     return single_release(inode, file);
+ }
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0)
++/* proc_create() takes const struct proc_ops* since 5.6 */
++const struct proc_ops _gmodule_proc_fops = {
++    proc_open:     _gmodule_proc_open,
++    proc_read:     seq_read,
++    proc_lseek:    seq_lseek,
++    proc_write:    _gmodule_proc_write,
++    proc_release:  _gmodule_proc_release,
++};
++#else
+ struct file_operations _gmodule_proc_fops = {
+     owner:      THIS_MODULE,
+     open:       _gmodule_proc_open,
+@@ -151,6 +161,7 @@
+     write:      _gmodule_proc_write,
+     release:    _gmodule_proc_release,
+ };
++#endif
+ #else
+ int
+ gmodule_vpprintf(char** page_ptr, const char* fmt, va_list args)
+@@ -265,7 +276,7 @@
+     return 0;
+ }
+ 
+-#ifdef HAVE_UNLOCKED_IOCTL
++#if defined(HAVE_UNLOCKED_IOCTL) || LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,36)
+ static long
+ _gmodule_unlocked_ioctl(struct file *filp,
+                         unsigned int cmd, unsigned long arg)
+@@ -328,7 +339,7 @@
+ /* FILE OPERATIONS */
+ 
+ struct file_operations _gmodule_fops = {
+-#ifdef HAVE_UNLOCKED_IOCTL
++#if defined(HAVE_UNLOCKED_IOCTL) || LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,36)
+     unlocked_ioctl: _gmodule_unlocked_ioctl,
+ #else
+     ioctl:      _gmodule_ioctl,
+--- a/systems/linux/kernel/modules/shared/ksal.c
++++ b/systems/linux/kernel/modules/shared/ksal.c
+@@ -35,8 +35,10 @@
+ #endif
+ #include <linux/time.h>
+ 
+-#ifdef MAX_USER_RT_PRIO
+-/* Assume 2.6 scheduler */
++/* 5.15 removed MAX_USER_RT_PRIO (unified into MAX_RT_PRIO); any 2.6+ kernel has
++ * yield() and dropped the SCHED_YIELD task->policy flag. Force the modern path. */
++#if defined(MAX_USER_RT_PRIO) || LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)
++/* 2.6+ scheduler */
+ #define SAL_YIELD(task) \
+     yield()
+ #else
+@@ -180,9 +182,16 @@
+ uint32
+ sal_time_usecs(void)
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0)
++    /* do_gettimeofday()/timeval removed for Y2038 */
++    struct timespec64 ltv;
++    ktime_get_real_ts64(&ltv);
++    return (ltv.tv_sec * SECOND_USEC + ltv.tv_nsec / 1000);
++#else
+     struct timeval ltv;
+     do_gettimeofday(&ltv);
+     return (ltv.tv_sec * SECOND_USEC + ltv.tv_usec);
++#endif
+ }
+     
+ void
+--- a/systems/linux/kernel/modules/include/lkm.h
++++ b/systems/linux/kernel/modules/include/lkm.h
+@@ -77,6 +77,13 @@
+ 
+ #define PROC_INTERFACE_KERN_VER_3_10 (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
+ 
++/* ioremap_nocache() was removed in 5.6 (identical to ioremap) */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0)
++#ifndef ioremap_nocache
++#define ioremap_nocache(addr, size) ioremap(addr, size)
++#endif
++#endif
++
+ /* Compatibility Macros */
+ 
+ #ifdef LKM_2_4
+--- a/systems/bde/linux/kernel/linux_dma.c
++++ b/systems/bde/linux/kernel/linux_dma.c
+@@ -117,6 +117,9 @@
+ #endif
+ 
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,27))
++/* 5.0+ kernels define DMA_MAPPING_ERROR as a constant in dma-mapping.h;
++ * undef it so the SDK's function-like macro (the call sites) wins. */
++#undef DMA_MAPPING_ERROR
+ #define DMA_MAPPING_ERROR(d, p)     dma_mapping_error((d),(p))
+ #else
+ #define DMA_MAPPING_ERROR(d, p)     dma_mapping_error((p))
+--- a/systems/linux/kernel/modules/bcm-knet/bcm-knet.c
++++ b/systems/linux/kernel/modules/bcm-knet/bcm-knet.c
+@@ -467,6 +467,7 @@
+ #define DMA_UNMAP_SINGLE(d,a,s,r)       dma_unmap_single(d,a,s,r)
+ #define DMA_ALLOC_COHERENT(d,s,h)       dma_alloc_coherent(d,s,h,GFP_ATOMIC|GFP_DMA32)
+ #define DMA_FREE_COHERENT(d,s,a,h)      dma_free_coherent(d,s,a,h)
++#undef DMA_MAPPING_ERROR  /* 5.0+ kernels define it in dma-mapping.h */
+ #define DMA_MAPPING_ERROR(d,a)          bkn_dma_mapping_error(d,a)
+ #else
+ #define DMA_DEV pci_dev
+@@ -6283,14 +6284,24 @@
+     return count;
+ }
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0)
++static const struct proc_ops bkn_proc_link_file_ops = {
++    .proc_open = bkn_proc_link_open,
++    .proc_read = seq_read,
++    .proc_write = bkn_proc_link_write,
++    .proc_lseek = seq_lseek,
++    .proc_release = single_release,
++};
++#else
+ struct file_operations bkn_proc_link_file_ops = {
+-    owner:      THIS_MODULE,
+-    open:       bkn_proc_link_open,
+-    read:       seq_read,
+-    llseek:     seq_lseek,
+-    write:      bkn_proc_link_write,
+-    release:    single_release,
++    .owner   = THIS_MODULE,
++    .open = bkn_proc_link_open,
++    .read = seq_read,
++    .write = bkn_proc_link_write,
++    .llseek = seq_lseek,
++    .release = single_release,
+ };
++#endif
+ 
+ /*
+  * Device Rate Control Proc Read Entry
+@@ -6390,14 +6401,24 @@
+     return count;
+ }
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0)
++static const struct proc_ops bkn_proc_rate_file_ops = {
++    .proc_open = bkn_proc_rate_open,
++    .proc_read = seq_read,
++    .proc_write = bkn_proc_rate_write,
++    .proc_lseek = seq_lseek,
++    .proc_release = single_release,
++};
++#else
+ struct file_operations bkn_proc_rate_file_ops = {
+-    owner:      THIS_MODULE,
+-    open:       bkn_proc_rate_open,
+-    read:       seq_read,
+-    llseek:     seq_lseek,
+-    write:      bkn_proc_rate_write,
+-    release:    single_release,
++    .owner   = THIS_MODULE,
++    .open = bkn_proc_rate_open,
++    .read = seq_read,
++    .write = bkn_proc_rate_write,
++    .llseek = seq_lseek,
++    .release = single_release,
+ };
++#endif
+ 
+ /*
+  * Driver DMA Proc Entry
+@@ -6640,13 +6661,22 @@
+     return seq_open(file, &bkn_seq_dma_ops);
+ };
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0)
++static const struct proc_ops bkn_seq_dma_file_ops = {
++    .proc_open = bkn_seq_dma_open,
++    .proc_read = seq_read,
++    .proc_lseek = seq_lseek,
++    .proc_release = seq_release,
++};
++#else
+ static struct file_operations bkn_seq_dma_file_ops = {
+     .owner   = THIS_MODULE,
+-    .open    = bkn_seq_dma_open,
+-    .read    = seq_read,
+-    .llseek  = seq_lseek,
+-    .release = seq_release
++    .open = bkn_seq_dma_open,
++    .read = seq_read,
++    .llseek = seq_lseek,
++    .release = seq_release,
+ };
++#endif
+ 
+ /*
+  * Device Debug Control Proc Write Entry
+@@ -6768,14 +6798,24 @@
+     return single_open(file, bkn_proc_debug_show, NULL);
+ }
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0)
++static const struct proc_ops bkn_proc_debug_file_ops = {
++    .proc_open = bkn_proc_debug_open,
++    .proc_read = seq_read,
++    .proc_write = bkn_proc_debug_write,
++    .proc_lseek = seq_lseek,
++    .proc_release = single_release,
++};
++#else
+ struct file_operations bkn_proc_debug_file_ops = {
+-    owner:      THIS_MODULE,
+-    open:       bkn_proc_debug_open,
+-    read:       seq_read,
+-    llseek:     seq_lseek,
+-    write:      bkn_proc_debug_write,
+-    release:    single_release,
++    .owner   = THIS_MODULE,
++    .open = bkn_proc_debug_open,
++    .read = seq_read,
++    .write = bkn_proc_debug_write,
++    .llseek = seq_lseek,
++    .release = single_release,
+ };
++#endif
+ 
+ /*
+  * Device Statistics Proc Entry
+@@ -6897,14 +6937,24 @@
+     return count;
+ }
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0)
++static const struct proc_ops bkn_proc_stats_file_ops = {
++    .proc_open = bkn_proc_stats_open,
++    .proc_read = seq_read,
++    .proc_write = bkn_proc_stats_write,
++    .proc_lseek = seq_lseek,
++    .proc_release = single_release,
++};
++#else
+ struct file_operations bkn_proc_stats_file_ops = {
+-    owner:      THIS_MODULE,
+-    open:       bkn_proc_stats_open,
+-    read:       seq_read,
+-    llseek:     seq_lseek,
+-    write:      bkn_proc_stats_write,
+-    release:    single_release,
++    .owner   = THIS_MODULE,
++    .open = bkn_proc_stats_open,
++    .read = seq_read,
++    .write = bkn_proc_stats_write,
++    .llseek = seq_lseek,
++    .release = single_release,
+ };
++#endif
+ 
+ /*
+  * Device Debug Statistics Proc Entry
+@@ -7073,14 +7123,24 @@
+     return count;
+ }
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0)
++static const struct proc_ops bkn_proc_dstats_file_ops = {
++    .proc_open = bkn_proc_dstats_open,
++    .proc_read = seq_read,
++    .proc_write = bkn_proc_dstats_write,
++    .proc_lseek = seq_lseek,
++    .proc_release = single_release,
++};
++#else
+ struct file_operations bkn_proc_dstats_file_ops = {
+-    owner:      THIS_MODULE,
+-    open:       bkn_proc_dstats_open,
+-    read:       seq_read,
+-    llseek:     seq_lseek,
+-    write:      bkn_proc_dstats_write,
+-    release:    single_release,
++    .owner   = THIS_MODULE,
++    .open = bkn_proc_dstats_open,
++    .read = seq_read,
++    .write = bkn_proc_dstats_write,
++    .llseek = seq_lseek,
++    .release = single_release,
+ };
++#endif
+ 
+ static int
+ bkn_proc_init(void)
+--- a/systems/linux/kernel/modules/bcm-knet/Makefile
++++ b/systems/linux/kernel/modules/bcm-knet/Makefile
+@@ -38,7 +38,7 @@
+ 
+ KBUILD_EXTRA_SYMBOLS := ${BLDDIR}/../../../../bde/linux/kernel/kernel_module/Module.symvers
+ ifeq (,$(findstring -DPROXY_SUPPORT=0,$(CFLAGS)))
+-KBUILD_EXTRA_SYMBOLS += ${BLDDIR}/../uk-proxy/kernel_module/Module.symvers
++KBUILD_EXTRA_SYMBOLS += $(wildcard ${BLDDIR}/../uk-proxy/kernel_module/Module.symvers)
+ endif
+ 
+ # BCM Network Device
+@@ -51,7 +51,7 @@
+ 	mkdir $(BLDDIR)/$(KERNEL_MODULE_DIR)
+ 	cp ${SDK}/make/Makefile.linux-kmodule $(BLDDIR)/$(KERNEL_MODULE_DIR)/Makefile
+ 	cat ${KBUILD_EXTRA_SYMBOLS} > $(BLDDIR)/$(KERNEL_MODULE_DIR)/Module.symvers
+-	MOD_NAME=$(THIS_MOD_NAME) $(MAKE) -C $(BLDDIR)/$(KERNEL_MODULE_DIR) $(THIS_MOD_NAME).ko
++	MOD_NAME=$(THIS_MOD_NAME) KBUILD_EXTRA_SYMBOLS="$(KBUILD_EXTRA_SYMBOLS)" $(MAKE) -C $(BLDDIR)/$(KERNEL_MODULE_DIR) $(THIS_MOD_NAME).ko
+ endif
+ 
+ # Make.depend is before clean:: so that Make.depend's clean:: runs first.
