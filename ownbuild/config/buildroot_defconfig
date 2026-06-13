@@ -1,0 +1,83 @@
+# EdgeNOS Buildroot configuration for AS4610-54T
+# Target: ARM Cortex-A9 (BCM56340 Helix4, armv7-a hard-float) — own-build, 5.10 kernel
+# Adapted from newnos (AS5610 / PowerPC).
+
+# Architecture — Cortex-A9 hard-float (matches the armhf kernel + ONL userland).
+# Cortex-A9's FPU is optional, so BR2_cortex_a9 only sets MAYBE_HAS_VFPV3 — must
+# explicitly ENABLE_VFP, else EABIHF/VFPv3 silently drop to soft-float EABI.
+BR2_arm=y
+BR2_cortex_a9=y
+BR2_ARM_ENABLE_VFP=y
+BR2_ARM_EABIHF=y
+BR2_ARM_FPU_VFPV3D16=y
+
+# Toolchain - Buildroot internal (glibc, gcc 12) — self-contained, no distro deps
+BR2_TOOLCHAIN_BUILDROOT=y
+BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+BR2_GCC_VERSION_12_X=y
+BR2_TOOLCHAIN_BUILDROOT_CXX=y
+
+# System
+BR2_TARGET_GENERIC_HOSTNAME="edgenos-4610"
+BR2_TARGET_GENERIC_ISSUE="EdgeNOS for AS4610-54T (Linux 5.10)"
+BR2_TARGET_GENERIC_GETTY_PORT="ttyS0"
+BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
+BR2_ROOTFS_OVERLAY="/home/smiley/edgecore/edgecore-4610-54t/ownbuild/config/overlay"
+BR2_INIT_SYSTEMD=y
+BR2_ROOTFS_POST_BUILD_SCRIPT="/home/smiley/edgecore/edgecore-4610-54t/ownbuild/config/post-build.sh"
+
+# Filesystem
+BR2_TARGET_ROOTFS_SQUASHFS=y
+BR2_TARGET_ROOTFS_SQUASHFS4_XZ=y
+BR2_TARGET_ROOTFS_TAR=y
+
+# Don't build kernel (we build it separately = the forward-ported 5.10)
+BR2_LINUX_KERNEL=n
+
+# Core packages
+BR2_PACKAGE_BUSYBOX=y
+BR2_PACKAGE_COREUTILS=y
+BR2_PACKAGE_BASH=y
+BR2_PACKAGE_PROCPS_NG=y
+BR2_PACKAGE_UTIL_LINUX=y
+BR2_PACKAGE_KMOD=y
+BR2_PACKAGE_KMOD_TOOLS=y
+
+# Networking
+BR2_PACKAGE_IPROUTE2=y
+BR2_PACKAGE_IPTABLES=y
+BR2_PACKAGE_BRIDGE_UTILS=y
+BR2_PACKAGE_ETHTOOL=y
+BR2_PACKAGE_OPENSSH=y
+BR2_PACKAGE_TCPDUMP=y
+BR2_PACKAGE_WGET=y
+BR2_PACKAGE_DHCP=y
+BR2_PACKAGE_DHCP_CLIENT=y
+BR2_PACKAGE_NTP=y
+
+# I2C / hardware tools (CPLD, SFP, sensors)
+BR2_PACKAGE_I2C_TOOLS=y
+BR2_PACKAGE_PCIUTILS=y
+BR2_PACKAGE_USBUTILS=y
+
+# Python (management scripts)
+BR2_PACKAGE_PYTHON3=y
+BR2_PACKAGE_PYTHON3_READLINE=y
+
+# System utilities
+BR2_PACKAGE_RSYNC=y
+BR2_PACKAGE_NANO=y
+BR2_PACKAGE_LESS=y
+BR2_PACKAGE_FILE=y
+BR2_PACKAGE_STRACE=y
+BR2_PACKAGE_LSOF=y
+
+# U-Boot tools (fw_setenv / fw_printenv — boot-slot + ONIE recovery)
+BR2_PACKAGE_UBOOT_TOOLS=y
+BR2_PACKAGE_UBOOT_TOOLS_FWPRINTENV=y
+
+# Logging
+BR2_PACKAGE_LOGROTATE=y
+
+# Root login
+BR2_TARGET_GENERIC_ROOT_PASSWD="onl"

@@ -1,0 +1,21 @@
+# systemd kernel requirements added on top of the ONL 4.x config (sysvinit) for the
+# Buildroot/systemd own-build. Append to .config then `make olddefconfig`.
+# (MEMCG/CGROUPS change struct page/task_struct -> after this, `make clean` + rebuild
+#  the kernel AND all out-of-tree modules.)
+CONFIG_CGROUPS=y
+CONFIG_MEMCG=y
+CONFIG_BLK_CGROUP=y
+CONFIG_CGROUP_SCHED=y
+CONFIG_CGROUP_PIDS=y
+CONFIG_CGROUP_FREEZER=y
+CONFIG_CGROUP_DEVICE=y
+CONFIG_CGROUP_CPUACCT=y
+CONFIG_CPUSETS=y
+CONFIG_NAMESPACES=y
+CONFIG_UTS_NS=y
+CONFIG_IPC_NS=y
+CONFIG_PID_NS=y
+CONFIG_NET_NS=y
+CONFIG_USER_NS=y
+CONFIG_SECCOMP=y
+CONFIG_SECCOMP_FILTER=y
