@@ -46,3 +46,24 @@ nos/datapath/bcmd/sfp_laser
 # Quagga routing daemon build outputs + source clone (large/external)
 nos/datapath/routing/*-arm
 nos/datapath/routing/dl/
+
+# --- Buildroot own-build (ownbuild/): track config/overlay SOURCE only ---
+#     The build tree is ~9GB of regenerable output; logs are large; staged
+#     binaries (bcmd, cross-built Quagga) are reproducible from the recipes.
+ownbuild/build/
+ownbuild/output/
+ownbuild/*.log
+ownbuild/config/overlay/opt/edgenos/bcmd
+ownbuild/config/overlay/opt/edgenos/zebra-arm
+ownbuild/config/overlay/opt/edgenos/ospfd-arm
+
+# --- Datapath staged build outputs (the bcmd binary; *.ko already ignored) ---
+nos/datapath/artifacts*/bcmd
+
+# --- ALL build output lives under output/ (kernel trees, FITs, SWIs, installers,
+#     bcmd, ko, swibuild rootfs). 250k+ files / GBs — never tracked. ---
+output/
+
+# --- Edited SDK working copy (gitignored; pristine lives in OpenBCM/. The
+#     source deltas are captured as nos/datapath/sdk-6.5.16-linux5.*-compat.patch) ---
+live-investigation/sdk-ref/
