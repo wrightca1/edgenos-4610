@@ -188,9 +188,20 @@
             };
 
             rtc@68 {
-                /* Actually M41T11 */
+                /* Actually M41T11. DISABLED on the 4.19 port: the dead battery
+                 * makes this read back 2001, so the 4.19 RTC core perpetually
+                 * re-arms an already-expired alarm via rtc_timer_do_work ->
+                 * ds1307_get_time, each pass a MUXED i2c read that holds the i2c1
+                 * xfer_lock and starves onlpd -> boot wedges before sshd/getty
+                 * (kernel stays alive + pings, userspace hangs). 4.14 tolerated it
+                 * because Edgecore had commented out the per-xfer msleep(1) in
+                 * xgs_iproc_smbus; the 4.19 forward-port re-added it, slowing each
+                 * muxed read enough to tip the re-arm burst into a lock-starving
+                 * wedge. NTP sets the clock, so losing the RTC costs nothing.
+                 * See docs/KERNEL_419_PORT.md. */
                 compatible = "dallas,ds1307";
                 reg = <0x68>;
+                status = "disabled";
             };
 
             board_eeprom@50 {

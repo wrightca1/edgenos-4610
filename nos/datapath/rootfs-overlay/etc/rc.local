@@ -1,0 +1,20 @@
+#!/bin/sh -e
+#
+# rc.local — executed at the end of each multiuser runlevel.
+#
+# EdgeNOS-4610 autostart. ONL ARM uses sysvinit with startpar (concurrent boot),
+# which honors insserv's dependency DB (/etc/init.d/.depend.start), NOT raw
+# rc?.d/SXX symlinks. rc.local IS in that DB and always runs late (after the
+# network), so we launch the datapath here. Backgrounded so the ~25s bcmd init
+# (and its "datapath UP" wait) doesn't stall the boot; log to /tmp/edgenos-boot.log.
+#
+# SETTLE DELAY (4.19): bringing up the chip (unbind iproc_cmic + insmod BDE +
+# bcmd `init all`) too early in boot HARD-HANGS the 4.19 kernel — a boot-time race
+# (the on-die CMIC / platform / i2c aren't fully settled). The exact same bringup
+# run a few seconds after boot completes works perfectly (0% ping). So wait for the
+# system to settle before touching the silicon. Proven on 4.14 too (harmless there).
+if [ -x /etc/init.d/edgenos ]; then
+    ( sleep 30; /etc/init.d/edgenos start </dev/null >/tmp/edgenos-boot.log 2>&1 ) &
+fi
+
+exit 0

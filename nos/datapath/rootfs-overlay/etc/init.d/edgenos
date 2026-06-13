@@ -1,0 +1,60 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          edgenos
+# Required-Start:    $local_fs $network $remote_fs $syslog
+# Required-Stop:     $local_fs $network $remote_fs $syslog
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: EdgeNOS-4610 datapath (bcmd + L3 config + Quagga OSPF)
+# Description:       Platform prep (BDE/KNET + CPLD), bcmd BCM56340 datapath,
+#                    L3 config from /etc/edged, then Quagga zebra+ospfd.
+### END INIT INFO
+
+# ONL ARM uses sysvinit (no systemd), so the datapath autostarts via this
+# init script, not the systemd units. Mirrors edgenos-up.sh / the 4 .service
+# files. Paths point at the baked image layout under /opt/edgenos + /etc.
+D=/opt/edgenos
+export EDGENOS_ETC=/etc/edged
+PATH=/sbin:/usr/sbin:/bin:/usr/bin
+export PATH
+
+start() {
+    echo "edgenos: platform prep + bcmd"
+    sh "$D/bcmd-prep.sh" || true
+    if ! pgrep -x bcmd >/dev/null 2>&1; then
+        ( cd "$D" && setsid ./bcmd >/tmp/bcmd.log 2>&1 </dev/null & )
+    fi
+    echo "edgenos: waiting for datapath UP"
+    i=0
+    while ! grep -q "datapath UP" /tmp/bcmd.log 2>/dev/null; do
+        i=$((i + 1)); [ "$i" -gt 60 ] && { echo "edgenos: WARN datapath UP absent"; break; }
+        sleep 2
+    done
+    echo "edgenos: applying L3 config"
+    sh "$D/edgenos-l3-config.sh" || true
+    echo "edgenos: starting Quagga"
+    mkdir -p /var/run/quagga
+    if ! pgrep -x zebra-arm >/dev/null 2>&1; then
+        ( cd /tmp && setsid "$D/zebra-arm" -f /etc/quagga/zebra.conf </dev/null >/tmp/zebra.log 2>&1 & )
+        sleep 3
+    fi
+    if ! pgrep -x ospfd-arm >/dev/null 2>&1; then
+        ( cd /tmp && setsid "$D/ospfd-arm" -f /etc/quagga/ospfd.conf </dev/null >/tmp/ospfd.log 2>&1 & )
+    fi
+    echo "edgenos: up bcmd=$(pgrep -x bcmd || echo -) zebra=$(pgrep -x zebra-arm || echo -) ospfd=$(pgrep -x ospfd-arm || echo -)"
+}
+
+stop() {
+    pkill -x ospfd-arm 2>/dev/null || true
+    pkill -x zebra-arm 2>/dev/null || true
+    pkill -x bcmd 2>/dev/null || true
+    echo "edgenos: stopped"
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; sleep 2; start ;;
+    status)  echo "bcmd=$(pgrep -x bcmd || echo -) zebra=$(pgrep -x zebra-arm || echo -) ospfd=$(pgrep -x ospfd-arm || echo -)" ;;
+    *)       echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac
