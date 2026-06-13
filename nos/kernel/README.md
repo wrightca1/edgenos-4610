@@ -44,8 +44,24 @@ major versions — a multi-week project. So we go incrementally:
   only for full `onie-nos-install` or unbootable recovery. Build scripts: `../build-515-fit.sh`,
   `../datapath/build-bde-515.sh`. Still to do for a deployable 5.15 NOS: a 5.15 own-build SWI
   (`ko515` baked) + installer, mirroring the 5.10 ones.
-- **Step 4+ — 5.15 → newer LTS** when needed (same re-float method; 6.x is a bigger delta —
-  `class_create` owner-drop @6.4, mm folios @5.16+).
+- **Step 4 — 5.15 → 6.1 LTS (first 6.x). ✅ BUILD DONE (2026-06-13).** Re-floated `brcm-iproc-5.15.patch`
+  onto pristine 6.1.175 — only 6 failed hunks; ~10 total deltas: 3 Makefile/Kconfig integration (dts
+  Makefile board DTB, broadcom Makefile APM objs, bgmac.c ethtool add-on) + 6.x C breaks
+  (`devm_gpio_free` removed → drop the explicit free, ×2 in phy-xgs-iproc.c; `ehci-platform.c`
+  `bcm_iproc_insnreg01`→`brcm_insnreg[1]` since 6.1 mainline added its own iProc EHCI support) + the
+  4 SDK/KNET shims (`dev->dev_addr` const@5.17 → `eth_hw_addr_set` ×2; `pci_set_dma_mask` removed →
+  `dma_set_mask`; `netif_napi_add` dropped weight@6.1 → `netif_napi_add_weight`). Canonical
+  `patches/brcm-iproc-6.1.patch` (0 rejects on pristine, build-verified) +
+  `../datapath/sdk-6.5.16-linux6.1-compat.patch` (superset of 5.15's). Kernel `Image` (14.2MB) +
+  modules + BDE/KNET trio build clean, vermagic `6.1.175-OpenNetworkLinux-armhf`; **SDK frozen →
+  `bcmd` unchanged.** Build scripts: `../build-61-fit.sh`, `../datapath/build-bde-61.sh`. HW boot test
+  pending. (`class_create` owner-drop is @6.4, i.e. the NEXT rung's concern, not 6.1.)
+  NOTE — patch-gen fix: `diff -rN` silently drops new files under `include/` during full-tree
+  recursion, so the canonical patches now explicitly append the 5 BSP `include/linux/` headers and are
+  **build-verified from pristine** (not just reject-checked). This also fixed the 5.15 patch, which
+  was missing those headers.
+- **Step 5+ — 6.1 → newer LTS** when needed (`class_create` owner-drop @6.4; `strlcpy` removed @6.8;
+  more folio/mm churn).
 
 Fallback at every rung: serial console + ICOS/known-good image rollback (proven).
 Licensing for distribution: all components distributable — see memory
