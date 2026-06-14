@@ -12,9 +12,18 @@ Working folder for bringing up our own NOS (EdgeNOS-class) on the
 > here is mostly *assembling and configuring an existing open stack*, not
 > static-analyzing a proprietary `switchd`.
 
+> 📖 **Building, flashing, or operating the box? → [`docs/`](docs/).** Practical,
+> human-readable guides for the build pipeline, the **ONIE image**, and the **A/B
+> dual-slot** install/recovery. **These are specific to the AS4610-54T — a different
+> switch from the AS5610-52X** (different ASIC, CPU, and access path; see the
+> comparison below). Don't apply 5610 procedures here.
+
 ---
 
 ## Start here
+
+0. [`docs/`](docs/) — **build & operate** the NOS: pipeline, ONIE images, A/B slots,
+   per-kernel forward-ports. Start with [`docs/BUILD_AND_DEPLOY.md`](docs/BUILD_AND_DEPLOY.md).
 
 1. [`HARDWARE_OVERVIEW.md`](HARDWARE_OVERVIEW.md) — the chip inventory and specs.
 2. [`ASIC_AND_CPU_ARCHITECTURE.md`](ASIC_AND_CPU_ARCHITECTURE.md) — **why the
@@ -83,7 +92,18 @@ See [`NOS_BUILD_PLAN.md`](NOS_BUILD_PLAN.md) for the concrete plan.
 
 ---
 
-## Project status (2026-06-06)
+## Project status
+
+**Latest (2026-06-14): production EdgeNOS-4610 is a from-scratch Buildroot own-build
+on Linux 6.1.175** (off the Dec-2026 EOL cliff; 6.1 EOL Dec 2027), installed as the
+default on **both A/B boot slots**, datapath autostarting on cold boot with **copper +
+fiber both at 0% loss**. The datapath daemon is **`bcmd`** (BCM SDK app) over the GPL
+BDE/KNET kernel modules. Kernel ladder 4.14 → 4.19 → 5.10 → 5.15 → **6.1**; all build,
+4.19/5.10/5.15/6.1 hardware-proven. Build + deploy + operate: **[`docs/`](docs/)**;
+kernel-ladder detail: [`nos/kernel/README.md`](nos/kernel/README.md). The
+2026-06-06 snapshot below is the earlier ONL-based `edged` milestone, kept for history.
+
+### Earlier milestone (2026-06-06, ONL-based `edged`)
 
 EdgeNOS-4610 (ONL-based) is **installed, booted, and forwarding** on a live
 AS4610-54T (`ma1`, ssh root). The open data-plane daemon **`edged`**
