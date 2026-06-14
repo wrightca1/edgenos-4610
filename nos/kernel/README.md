@@ -62,7 +62,12 @@ major versions — a multi-week project. So we go incrementally:
   (in `sdk-6.5.16-linux6.1-compat.patch`, version-guarded). **✅ HW-VALIDATED (2026-06-14):** after a
   power-cycle, 6.1.175 cold-boots clean, the fixed `ko61` loads (CMIC detected `type 20000180`, BDE
   init completes — no oops), `bcmd` active, **both ports 0% loss: copper `ge25` → 10.14.1.254 AND
-  fiber `xe0` (SFP+) → 10.101.102.1** (ARP resolved). The first 6.x rung is fully proven on hardware. (`class_create` owner-drop is @6.4, next rung's concern.)
+  fiber `xe0` (SFP+) → 10.101.102.1** (ARP resolved). The first 6.x rung is fully proven on hardware.
+  **PRODUCTION-INSTALLED as the default (2026-06-14):** baked `ko61` into the Buildroot own-build SWI
+  (`EdgeNOS-4610-61-ownbuild.swi`, `nos/build-ownbuild-swi-61.sh`), put the 6.1 FIT on **both** A/B
+  itb slots + boot-config→6.1 SWI (5.10 kept as `main-510-backup.itb`). **Both slots independently
+  cold-boot 6.1 and AUTOSTART the datapath unattended — copper + fiber both 0% loss on each slot.**
+  Reflashable image: `nos/build-61-installer.sh` → `output/onie-installer-edgenos-61-ownbuild`. (`class_create` owner-drop is @6.4, next rung's concern.)
   NOTE: rebooting *from* a degraded state (an oopsed module still loaded) can wedge on shutdown
   ("watchdog did not stop!" + busy loop device) → needs a physical power-cycle; a clean cold boot is
   fine.
