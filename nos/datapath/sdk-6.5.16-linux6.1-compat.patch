@@ -1,3 +1,21 @@
+--- a/systems/bde/linux/kernel/linux-kernel-bde.c
++++ b/systems/bde/linux/kernel/linux-kernel-bde.c
+@@ -765,8 +765,15 @@
+     } else
+ #endif
+     {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,0,0)
++        /* 6.x: DT platform IRQs are no longer kept in the resource table, so
++         * platform_get_resource(IORESOURCE_IRQ) returns NULL (NULL-deref on
++         * irqres->start). Use platform_get_irq(), which maps the DT IRQ. */
++        ctrl->iLine = platform_get_irq(pldev, 0);
++#else
+         irqres = iproc_platform_get_resource(pldev, IORESOURCE_IRQ, 0);
+         ctrl->iLine = irqres->start;
++#endif
+     }
+ 
+     ctrl->isr = NULL;
 --- a/systems/linux/kernel/modules/shared/gmodule.c
 +++ b/systems/linux/kernel/modules/shared/gmodule.c
 @@ -143,6 +143,16 @@

@@ -54,8 +54,15 @@ major versions — a multi-week project. So we go incrementally:
   `patches/brcm-iproc-6.1.patch` (0 rejects on pristine, build-verified) +
   `../datapath/sdk-6.5.16-linux6.1-compat.patch` (superset of 5.15's). Kernel `Image` (14.2MB) +
   modules + BDE/KNET trio build clean, vermagic `6.1.175-OpenNetworkLinux-armhf`; **SDK frozen →
-  `bcmd` unchanged.** Build scripts: `../build-61-fit.sh`, `../datapath/build-bde-61.sh`. HW boot test
-  pending. (`class_create` owner-drop is @6.4, i.e. the NEXT rung's concern, not 6.1.)
+  `bcmd` unchanged.** Build scripts: `../build-61-fit.sh`, `../datapath/build-bde-61.sh`.
+  **HW: 6.1.175 boots clean to login on real hardware** (twice). Datapath needed one more 6.x fix
+  found at *runtime*: `linux-kernel-bde` `iproc_cmicd_probe()` NULL-derefed at load —
+  `platform_get_resource(pldev, IORESOURCE_IRQ, 0)` returns NULL in 6.x (DT platform IRQs are no
+  longer in the resource table) so `irqres->start` faults; fixed with `platform_get_irq(pldev, 0)`
+  (in `sdk-6.5.16-linux6.1-compat.patch`, version-guarded). `ko61` rebuilt with the fix + re-staged;
+  **datapath/ping HW-verify is pending a power-cycle** (the reboot *from* the pre-fix degraded state —
+  oopsed module loaded — wedged on shutdown and needs a physical power-cycle; cold boot will come up
+  on the 6.1 test slot with the fixed module). (`class_create` owner-drop is @6.4, next rung's concern.)
   NOTE — patch-gen fix: `diff -rN` silently drops new files under `include/` during full-tree
   recursion, so the canonical patches now explicitly append the 5 BSP `include/linux/` headers and are
   **build-verified from pristine** (not just reject-checked). This also fixed the 5.15 patch, which
