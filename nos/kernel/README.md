@@ -59,10 +59,13 @@ major versions — a multi-week project. So we go incrementally:
   found at *runtime*: `linux-kernel-bde` `iproc_cmicd_probe()` NULL-derefed at load —
   `platform_get_resource(pldev, IORESOURCE_IRQ, 0)` returns NULL in 6.x (DT platform IRQs are no
   longer in the resource table) so `irqres->start` faults; fixed with `platform_get_irq(pldev, 0)`
-  (in `sdk-6.5.16-linux6.1-compat.patch`, version-guarded). `ko61` rebuilt with the fix + re-staged;
-  **datapath/ping HW-verify is pending a power-cycle** (the reboot *from* the pre-fix degraded state —
-  oopsed module loaded — wedged on shutdown and needs a physical power-cycle; cold boot will come up
-  on the 6.1 test slot with the fixed module). (`class_create` owner-drop is @6.4, next rung's concern.)
+  (in `sdk-6.5.16-linux6.1-compat.patch`, version-guarded). **✅ HW-VALIDATED (2026-06-14):** after a
+  power-cycle, 6.1.175 cold-boots clean, the fixed `ko61` loads (CMIC detected `type 20000180`, BDE
+  init completes — no oops), `bcmd` active, **copper `ge25` ping 10.14.1.254 = 0% loss.** The first
+  6.x rung is fully proven on hardware. (`class_create` owner-drop is @6.4, next rung's concern.)
+  NOTE: rebooting *from* a degraded state (an oopsed module still loaded) can wedge on shutdown
+  ("watchdog did not stop!" + busy loop device) → needs a physical power-cycle; a clean cold boot is
+  fine.
   NOTE — patch-gen fix: `diff -rN` silently drops new files under `include/` during full-tree
   recursion, so the canonical patches now explicitly append the 5 BSP `include/linux/` headers and are
   **build-verified from pristine** (not just reject-checked). This also fixed the 5.15 patch, which
