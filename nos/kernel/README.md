@@ -61,8 +61,8 @@ major versions — a multi-week project. So we go incrementally:
   longer in the resource table) so `irqres->start` faults; fixed with `platform_get_irq(pldev, 0)`
   (in `sdk-6.5.16-linux6.1-compat.patch`, version-guarded). **✅ HW-VALIDATED (2026-06-14):** after a
   power-cycle, 6.1.175 cold-boots clean, the fixed `ko61` loads (CMIC detected `type 20000180`, BDE
-  init completes — no oops), `bcmd` active, **copper `ge25` ping 10.14.1.254 = 0% loss.** The first
-  6.x rung is fully proven on hardware. (`class_create` owner-drop is @6.4, next rung's concern.)
+  init completes — no oops), `bcmd` active, **both ports 0% loss: copper `ge25` → 10.14.1.254 AND
+  fiber `xe0` (SFP+) → 10.101.102.1** (ARP resolved). The first 6.x rung is fully proven on hardware. (`class_create` owner-drop is @6.4, next rung's concern.)
   NOTE: rebooting *from* a degraded state (an oopsed module still loaded) can wedge on shutdown
   ("watchdog did not stop!" + busy loop device) → needs a physical power-cycle; a clean cold boot is
   fine.
