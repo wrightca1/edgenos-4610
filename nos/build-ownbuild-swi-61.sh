@@ -24,6 +24,10 @@ docker run --rm -u root:0 -v "$ROOT":"$ROOT" -w "$KP" "$IMG" bash -lc '
   set -e; rm -rf rootfs-rw
   unsquashfs -n -d rootfs-rw '"$SQ"' >/dev/null
   cp '"$KO"'/*.ko rootfs-rw/opt/edgenos/
+  # re-sync the canonical overlay systemd units (the buildroot squashfs may predate
+  # overlay edits — e.g. the version-neutral bcmd.service Description) so a SWI repack
+  # always matches source without a full buildroot rebuild.
+  cp '"$EDGE"'/ownbuild/config/overlay/etc/systemd/system/*.service rootfs-rw/etc/systemd/system/ 2>/dev/null || true
   rm -f rootfs-armhf.sqsh
   mksquashfs rootfs-rw rootfs-armhf.sqsh -noappend -no-xattrs -comp xz >/dev/null
   rm -rf rootfs-rw'

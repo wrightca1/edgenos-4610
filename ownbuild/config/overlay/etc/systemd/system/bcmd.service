@@ -1,5 +1,5 @@
 [Unit]
-Description=EdgeNOS-4610 bcmd — BCM56340 datapath daemon (Linux 5.10)
+Description=EdgeNOS-4610 bcmd — BCM56340 datapath daemon
 After=local-fs.target
 ConditionPathExists=/opt/edgenos/bcmd
 
