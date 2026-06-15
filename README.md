@@ -18,6 +18,26 @@ Working folder for bringing up our own NOS (EdgeNOS-class) on the
 > switch from the AS5610-52X** (different ASIC, CPU, and access path; see the
 > comparison below). Don't apply 5610 procedures here.
 
+## ⚖️ License — please read before reuse
+
+This repository is **mixed-license and source-available, NOT pure open-source (OSI/FSF).**
+Full detail in **[`LICENSING.md`](LICENSING.md)** and **[`NOTICE`](NOTICE)**.
+
+- **GPLv2** — the Linux kernel + our out-of-tree BSP patches (`nos/kernel/patches/`),
+  the Broadcom GPL BDE/KNET modules, Buildroot, and Quagga.
+- **Broadcom source-available** (Avago/Broadcom license; redistribution + derivatives +
+  sublicensing permitted, royalty-free — but **not** OSI/FSF "free software"): the OpenBCM
+  SDK and OpenMDK that the datapath (`bcmd`) builds against.
+- **Broadcom BCM84758 PHY firmware** in [`nos/datapath/phy84758-src/broadcom-official/`](nos/datapath/phy84758-src/broadcom-official/)
+  is redistributed from Broadcom's **own public** `robo2-xsdk` repository under its
+  `Legal/LICENSE` grant (see that dir's `LICENSE` + `PROVENANCE.md`). Its license text
+  uses proprietary/"restricted rights" language; it is included on the basis of Broadcom's
+  public release + redistribution grant, not as a claim that it is libre.
+
+You may build, run, and ship a NOS from this; you may **not** relicense the Broadcom-derived
+components under the GPL or call the data plane libre. Keep all upstream notices.
+Firmware binaries (`*.bin`) and large build outputs are gitignored — this repo is source.
+
 ---
 
 ## Start here

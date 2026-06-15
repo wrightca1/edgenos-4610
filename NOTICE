@@ -1,0 +1,44 @@
+EdgeNOS-4610 — NOTICE / Licensing summary
+=========================================
+
+This repository is MIXED-LICENSE and SOURCE-AVAILABLE — it is NOT pure
+open-source (OSI/FSF). See LICENSING.md for the full breakdown. Summary:
+
+1. GPLv2
+   - The Linux kernel and our out-of-tree XGS-iProc BSP patches
+     (nos/kernel/patches/brcm-iproc-*.patch).
+   - Broadcom GPL kernel modules: linux-kernel-bde, linux-user-bde,
+     linux-bcm-knet (source: OpenBCM SDK gpl-modules).
+   - Buildroot and the Quagga routing suite.
+   Comply with GPLv2 for these: keep notices, offer corresponding source.
+
+2. Broadcom / Avago SOURCE-AVAILABLE (NOT OSI/FSF "free software")
+   - OpenBCM SDK and OpenMDK, which the datapath daemon (bcmd) builds against.
+   - License (Avago Technologies International Sales Pte. Ltd.): redistribution,
+     derivative works, and sublicensing are permitted, royalty-free and
+     perpetual — but you may NOT relicense these under the GPL, and you may NOT
+     describe the data plane as libre/open-source. Read each tree's Legal/LICENSE.
+
+3. Broadcom BCM84758 PHY firmware (nos/datapath/phy84758-src/broadcom-official/)
+   - Redistributed from Broadcom's OWN PUBLIC robo2-xsdk GitHub repository under
+     that repo's Legal/LICENSE grant. See that directory's LICENSE and
+     PROVENANCE.md. The license text uses proprietary / "RESTRICTED RIGHTS" /
+     "trade secret" language; it is included here on the basis of Broadcom's
+     public release and redistribution grant, NOT as a claim that it is libre.
+   - Firmware binaries (*.bin) themselves are gitignored; this repo carries the
+     Broadcom-published C source form.
+
+4. Our own code (datapath glue in nos/datapath/bcmd, build scripts, docs,
+   Buildroot overlay/config): authored by this project. Where it is a derivative
+   of, or links against, the Broadcom source-available SDKs, the Broadcom license
+   terms above govern that combined/derivative work.
+
+Bottom line: you can legally build, run, and distribute a NOS from this tree.
+You cannot relicense the Broadcom-derived parts under the GPL or call the data
+plane open-source. Keep all upstream copyright and license notices intact.
+
+The proprietary stock vendor firmware (Broadcom FASTPATH/ICOS) is NOT in this
+repository; it is retained privately as a verified-restorable backup only.
+
+This is a summary for convenience and is NOT legal advice — read the actual
+Legal/LICENSE files in each upstream component before shipping.
