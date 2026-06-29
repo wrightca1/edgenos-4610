@@ -1,3 +1,19 @@
+> # ⚠️ DEPRECATED — moved to the unified EdgeNOS repo
+>
+> ### → https://github.com/wrightca1/edgenos
+>
+> AS4610-54T development now lives in the unified **EdgeNOS** project, which builds
+> the AS4610-54T **and** the AS5610-52X from a single multi-architecture /
+> multi-ASIC source tree: switch database, `.epk` packages, per-switch ONIE images,
+> the `bcmd`/`edged` datapath, device trees, and the platform/HAL layer. The 4610
+> platform, build scripts, package specs, `bcmd` source, and device trees are all
+> present there.
+>
+> This repository is kept read-only for historical reference. **New work, issues,
+> and releases happen in [`wrightca1/edgenos`](https://github.com/wrightca1/edgenos).**
+
+---
+
 # Edgecore AS4610-54T — Open NOS Project
 
 Working folder for bringing up our own NOS (EdgeNOS-class) on the
