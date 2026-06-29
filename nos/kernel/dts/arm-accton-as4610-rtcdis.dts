@@ -313,7 +313,7 @@
 				reg = <0x70>;
 				#address-cells = <0x1>;
 				#size-cells = <0x0>;
-				deselect-on-exit;
+				i2c-mux-idle-disconnect;
 
 				i2c@0 {
 					#address-cells = <0x1>;

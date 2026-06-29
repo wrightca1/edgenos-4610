@@ -28,6 +28,14 @@ docker run --rm -u root:0 -v "$ROOT":"$ROOT" -w "$KP" "$IMG" bash -lc '
   # overlay edits — e.g. the version-neutral bcmd.service Description) so a SWI repack
   # always matches source without a full buildroot rebuild.
   cp '"$EDGE"'/ownbuild/config/overlay/etc/systemd/system/*.service rootfs-rw/etc/systemd/system/ 2>/dev/null || true
+  # re-sync the datapath daemon + its scripts/config from the overlay too, so a
+  # SWI repack picks up a rebuilt bcmd (e.g. the LED-program change) without a
+  # full buildroot rebuild. (*.ko are handled above; big Quagga binaries unchanged.)
+  cp '"$EDGE"'/ownbuild/config/overlay/opt/edgenos/bcmd rootfs-rw/opt/edgenos/ 2>/dev/null || true
+  cp '"$EDGE"'/ownbuild/config/overlay/opt/edgenos/bcmd-prep.sh \
+     '"$EDGE"'/ownbuild/config/overlay/opt/edgenos/edgenos-l3-config.sh \
+     '"$EDGE"'/ownbuild/config/overlay/opt/edgenos/config.bcm rootfs-rw/opt/edgenos/ 2>/dev/null || true
+  chmod +x rootfs-rw/opt/edgenos/bcmd rootfs-rw/opt/edgenos/*.sh 2>/dev/null || true
   rm -f rootfs-armhf.sqsh
   mksquashfs rootfs-rw rootfs-armhf.sqsh -noappend -no-xattrs -comp xz >/dev/null
   rm -rf rootfs-rw'

@@ -139,6 +139,28 @@ static int bcmd_chip_init(void)
     if (sh_process_command(BCMD_UNIT, "init bcm") != 0) {
         printf("[bcmd] 'init bcm' failed\n"); return -1;
     }
+
+    /* Program the chip LED microcontroller. Without this the M0 sits idle and the
+     * external LED latches power up driving every port LED solid-on. Load the
+     * open-source Helix4 GE-family reference LED program (OpenMDK board/xgsled/
+     * sdk53344_ref.c, 216 bytes, Broadcom Switch-APIs license), enable
+     * linkscan-driven auto updates (down/no-SFP ports -> off, link -> on,
+     * activity -> blink), and start the M0. Cosmetic only; no forwarding impact.
+     * Best-effort: a failure here must not abort datapath bring-up. */
+    if (sh_process_command(BCMD_UNIT,
+            "led prog "
+            "021d2860e167bc06e190d21974020219902860e167bc06e1802860e167bc06e190"
+            "90d20974100202802860e167bc06e1902860e167bc06e18080d20a7428021d2860"
+            "e1679206e190d21974400219902860e1679206e1802860e1679206e19090d20974"
+            "4e0202802860e1679206e1902860e1679206e18080d20a746612e08505d2027186"
+            "520012e28505d203719052003a3832003201b79775a112e2fee102035012e2fee1"
+            "9575ab8577ad77c806e167b575d077d412a0f8151a005732049771d432039771c8"
+            "77d016e0da0171d477d0320f8757320e8757") != 0) {
+        printf("[bcmd] WARN: 'led prog' failed (LEDs cosmetic; continuing)\n");
+    }
+    sh_process_command(BCMD_UNIT, "led auto on");
+    sh_process_command(BCMD_UNIT, "led start");
+
     printf("[bcmd] chip attached + init all/bcm done\n");
     return 0;
 }
